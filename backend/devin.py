@@ -8,10 +8,13 @@ from urllib.parse import quote
 
 import httpx
 
+from backend.mock_bugs import mock_bug_for_upload
+from backend.report import BugReport
+
 API_BASE = "https://api.devin.ai"
 DEFAULT_ORG_ID = "org-8df7501a85724235b32b5e64a28da839"
 
-DEVIN_FIX_INSTRUCTIONS = """Serve demo-app/ locally with `python3 -m http.server`, then reproduce the bug in a browser by following the steps above. Take a screenshot showing the bug. Make the minimal fix, then take another screenshot to verify the fix. Open a PR against `main` titled `Fix: {title}`. The PR description must include the bug report, the root cause in 1–2 sentences, and the before/after screenshots. Do not touch unrelated files."""
+DEVIN_FIX_INSTRUCTIONS = """Serve demo-app/ locally with `python3 -m http.server`, then reproduce the bug in a browser by following the steps above. Take a screenshot showing the bug. Make the minimal fix, then take another screenshot to verify the fix. Open a PR against `main` titled `Fix: {title}`. The PR description must include the bug report, the root cause in 1–2 sentences, and the before/after screenshots. In the PR body, label the images with alt text exactly `before` and `after`. After opening the PR, update the structured output again with all bug report fields plus `before_screenshot_url` and `after_screenshot_url` (the exact URLs of the before and after screenshots embedded in the PR), `root_cause` (1–2 sentences), and `code_diff` (the unified diff of your fix). Do not touch unrelated files."""
 
 DEVIN_PROMPT_TEMPLATE = """Work in the repository {target_repo}.
 
@@ -34,20 +37,6 @@ _MOCK_MILESTONES = [
     "Found the relevant UI code; preparing a focused fix.",
     "Verifying the change and opening a pull request.",
 ]
-_MOCK_VISION_REPORT = {
-    "title": "Tech Tower Burger quantity is omitted from the subtotal",
-    "page": "GT Dining order page",
-    "steps": [
-        "Open GT Dining and add one Tech Tower Burger.",
-        "Click the plus control once so the cart quantity is 2.",
-    ],
-    "expected": "The subtotal should be $25.00 for two Tech Tower Burgers at $12.50 each.",
-    "actual": "The cart shows quantity 2, but the subtotal is $12.50.",
-    "suspected_area": "The burger subtotal calculation in demo-app/app.js does not multiply by quantity.",
-    "severity": "medium",
-}
-
-
 def build_prompt(report: dict[str, object]) -> str:
     target_repo = os.getenv("TARGET_REPO", "woodstock-thebrid/video2pr")
     steps = "\n".join(f"{index}. {step}" for index, step in enumerate(report["steps"], start=1))
@@ -62,6 +51,34 @@ def build_prompt(report: dict[str, object]) -> str:
         severity=report["severity"],
         fix_instructions=DEVIN_FIX_INSTRUCTIONS.format(title=report["title"]),
     )
+
+
+def build_session_schema() -> dict[str, object]:
+    schema_builder = getattr(BugReport, "model_json_schema", None)
+    schema = schema_builder() if schema_builder else BugReport.schema()
+    properties = schema.setdefault("properties", {})
+    properties.update(
+        {
+            "before_screenshot_url": {
+                "type": "string",
+                "description": "Exact URL of the before screenshot embedded in the PR.",
+            },
+            "after_screenshot_url": {
+                "type": "string",
+                "description": "Exact URL of the after screenshot embedded in the PR.",
+            },
+            "root_cause": {
+                "type": "string",
+                "description": "One or two sentences describing the root cause.",
+            },
+            "code_diff": {
+                "type": "string",
+                "description": "Unified diff of the minimal fix.",
+            },
+        }
+    )
+    assert "$ref" not in json.dumps(schema), "Session schema must be self-contained"
+    return schema
 
 
 def build_vision_prompt(note: str | None, attachment_urls: list[str]) -> str:
@@ -146,6 +163,8 @@ def create_session(
     title: str,
     structured_output_schema: dict[str, object] | None = None,
     attachment_urls: list[str] | None = None,
+    *,
+    upload_name: str | None = None,
 ) -> dict[str, str]:
     if _mock_enabled():
         session_id = f"mock-{uuid.uuid4().hex[:12]}"
@@ -153,6 +172,7 @@ def create_session(
             "created_at": time.monotonic(),
             "title": title,
             "structured_output_enabled": structured_output_schema is not None,
+            "upload_name": upload_name,
         }
         return {"session_id": session_id, "url": f"https://app.devin.ai/sessions/{session_id}"}
 
@@ -270,6 +290,9 @@ def _v3_session(session_id: str) -> dict[str, object]:
 def get_session(session_id: str) -> dict[str, object]:
     if session_id.startswith("mock-"):
         session = _mock_sessions[session_id]
+        bug = mock_bug_for_upload(
+            session.get("upload_name") if isinstance(session.get("upload_name"), str) else None
+        )
         elapsed = time.monotonic() - float(session["created_at"])
         duration = max(float(os.getenv("MOCK_DEVIN_SECONDS", "40")), 0.1)
         progress = min(elapsed / duration, 1)
@@ -277,7 +300,19 @@ def get_session(session_id: str) -> dict[str, object]:
         timestamp = datetime.now(timezone.utc).isoformat()
         finished = progress >= 1
         structured_output = (
-            _MOCK_VISION_REPORT
+            {
+                **bug["report"],
+                **(
+                    {
+                        "before_screenshot_url": bug["before_url"],
+                        "after_screenshot_url": bug["after_url"],
+                        "root_cause": bug["root_cause"],
+                        "code_diff": bug["code_diff"],
+                    }
+                    if finished
+                    else {}
+                ),
+            }
             if session.get("structured_output_enabled") and progress >= 0.2
             else None
         )

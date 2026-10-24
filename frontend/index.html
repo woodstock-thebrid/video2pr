@@ -28,7 +28,7 @@
       <div class="upload-panel">
         <div class="panel-heading"><div><span class="number">01</span><h2>Start with a recording</h2></div><span class="optional">MP4 · MOV · WEBM</span></div>
         <label id="drop-zone" class="drop-zone" for="video-file">
-          <input id="video-file" type="file" accept="video/*" capture="environment">
+          <input id="video-file" type="file" accept="video/*" capture="environment" multiple>
           <span class="upload-icon" aria-hidden="true">↑</span>
           <strong id="upload-title">Drop your video here</strong>
           <span id="upload-subtitle">or <u>choose a file</u> from your device</span>
@@ -50,6 +50,7 @@
         <div id="job-view" hidden>
           <div id="stage-stepper" class="stage-stepper"></div>
           <div id="job-content" class="job-content"></div>
+          <div id="batch-view" hidden></div>
         </div>
       </div>
     </section>
