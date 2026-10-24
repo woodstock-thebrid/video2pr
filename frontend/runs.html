@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10253d">
+  <title>video2pr — Real Devin runs</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="wordmark"><span class="mark">v2</span><span>video<span class="wordmark-accent">2</span>pr</span></a>
+    <div class="header-note"><span class="pulse-dot"></span> REAL DEVIN SESSIONS</div>
+    <nav class="header-links" aria-label="Project links">
+      <a class="runs-link" href="/">Upload a bug video</a>
+      <a class="demo-link" href="/demo/" target="_blank" rel="noreferrer">Explore the demo app <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main class="runs-main">
+    <section class="runs-intro">
+      <p class="eyebrow">THE PAPER TRAIL</p>
+      <h1>Real Devin runs</h1>
+      <p>Every card below is a real Devin session on this repo. No mock data.</p>
+    </section>
+    <section class="real-run-grid" aria-label="Real Devin runs">
+      <article class="real-run-card">
+        <div class="run-card-heading"><span class="run-bug-label">Bug 1 · Burger quantity</span><span class="run-pr-number">PR #8</span></div>
+        <h2>Adding Tech Tower Burger once shows quantity 2 but subtotal only charges for 1 ($12.50)</h2>
+        <div class="run-timeline" aria-label="Report at 0:33, pull request at 1:35, comparison on the page at 2:30">
+          <span><strong>0:33</strong> report</span><span><strong>1:35</strong> PR</span><span><strong>2:30</strong> before/after</span>
+        </div>
+        <div class="run-images">
+          <a href="/runs/bug1-before.png" target="_blank" rel="noopener noreferrer"><span>BEFORE</span><img src="/runs/bug1-before.png" alt="Before: burger quantity 2, subtotal $12.50"></a>
+          <a href="/runs/bug1-after.png" target="_blank" rel="noopener noreferrer"><span>AFTER</span><img src="/runs/bug1-after.png" alt="After: burger quantity 2, subtotal $25.00"></a>
+        </div>
+        <p class="run-root-cause"><strong>Root cause</strong> The subtotal reduce in <code>renderCart()</code> special-cased <code>id === "burger"</code> to always multiply the price by 1 instead of the cart quantity, so additional Tech Tower Burgers were counted in the badge and line item but never charged.</p>
+        <details class="run-diff">
+          <summary>Fix diff</summary>
+          <pre>diff --git a/demo-app/app.js b/demo-app/app.js
+index f70aecf..8979351 100644
+--- a/demo-app/app.js
++++ b/demo-app/app.js
+@@ -27,7 +27,7 @@ function renderCart() {
+   const itemCount = entries.reduce((sum, [, quantity]) =&gt; sum + quantity, 0);
+   const subtotal = entries.reduce((sum, [id, quantity]) =&gt; {
+     const item = menu.find(candidate =&gt; candidate.id === id);
+-    return sum + item.price * (id === "burger" ? 1 : quantity);
++    return sum + item.price * quantity;
+   }, 0);
+   const tax = subtotal * 0.089;
+   document.querySelector("#cart-count").textContent = itemCount;</pre>
+        </details>
+        <div class="run-links">
+          <a href="https://github.com/woodstock-thebrid/video2pr/pull/8" target="_blank" rel="noopener noreferrer">Pull request #8 ↗</a>
+          <a href="https://app.devin.ai/sessions/f0690cecd1e040b88c4de95258195ff2" target="_blank" rel="noopener noreferrer">Devin session ↗</a>
+        </div>
+      </article>
+
+      <article class="real-run-card">
+        <div class="run-card-heading"><span class="run-bug-label">Bug 4 · Double order</span><span class="run-pr-number">PR #7</span></div>
+        <h2>Cart is not cleared after checkout — Tech Tower Burger stays in Your Order after "Order #2 is in the works!"</h2>
+        <p class="run-note">Planted: double-submit on checkout. Devin's reading: cart not cleared after checkout. Its fix is real but targets a different symptom, which is why a human reviews every PR.</p>
+        <p class="run-root-cause"><strong>Root cause not verified</strong> Devin's report suspected the checkout click handler's cart reset/re-render and order counter. This run was paused by a GitHub permission issue.</p>
+        <p class="run-images-unavailable">No before/after images were available from the paused run.</p>
+        <div class="run-links">
+          <a href="https://github.com/woodstock-thebrid/video2pr/pull/7" target="_blank" rel="noopener noreferrer">Pull request #7 ↗</a>
+          <a href="https://app.devin.ai/sessions/f4ccba0a55d74907b6430f8d8617ef33" target="_blank" rel="noopener noreferrer">Devin session ↗</a>
+        </div>
+      </article>
+
+      <article class="real-run-card">
+        <div class="run-card-heading"><span class="run-bug-label">Bug 3 · Multi-word search</span><span class="run-pr-number">PR #4</span></div>
+        <h2>Menu search returns no results for multi-word queries like "chicken tenders"</h2>
+        <div class="run-timeline" aria-label="Report about 0:31, pull request about 1:00">
+          <span><strong>about 0:31</strong> report</span><span><strong>about 1:00</strong> PR</span>
+        </div>
+        <p class="run-note">No text hint given — Devin worked from the frames alone.</p>
+        <div class="run-images">
+          <a href="/runs/bug3-before.png" target="_blank" rel="noopener noreferrer"><span>BEFORE</span><img src="/runs/bug3-before.png" alt="Before: no results for chicken tenders"></a>
+          <a href="/runs/bug3-after.png" target="_blank" rel="noopener noreferrer"><span>AFTER</span><img src="/runs/bug3-after.png" alt="After: Chicken Tenders appears for chicken tenders"></a>
+        </div>
+        <p class="run-root-cause"><strong>Root cause</strong> <code>renderMenu</code> removed all whitespace from the query (<code>replace(/\s/g, "")</code>), so "chicken tenders" became "chickentenders", which never matches the item name.</p>
+        <details class="run-diff">
+          <summary>Fix diff</summary>
+          <pre>- const normalizedTerm = searchTerm.toLowerCase().replace(/\s/g, "");
++ const normalizedTerm = searchTerm.toLowerCase().trim().replace(/\s+/g, " ");</pre>
+        </details>
+        <div class="run-links">
+          <a href="https://github.com/woodstock-thebrid/video2pr/pull/4" target="_blank" rel="noopener noreferrer">Pull request #4 ↗</a>
+          <a href="https://app.devin.ai/sessions/1c6070e1f18b422a8859bff44881b83f" target="_blank" rel="noopener noreferrer">Devin session ↗</a>
+        </div>
+      </article>
+
+      <article class="real-run-card">
+        <div class="run-card-heading"><span class="run-bug-label">Bug 1 · Burger quantity · first run</span><span class="run-pr-number">PR #2</span></div>
+        <h2>Unexpected behavior on the recorded page</h2>
+        <div class="run-images">
+          <a href="/runs/bug1-first-before.png" target="_blank" rel="noopener noreferrer"><span>BEFORE</span><img src="/runs/bug1-first-before.png" alt="Before: subtotal $12.50 with quantity 2"></a>
+          <a href="/runs/bug1-first-after.png" target="_blank" rel="noopener noreferrer"><span>AFTER</span><img src="/runs/bug1-first-after.png" alt="After: subtotal $25.00 with quantity 2"></a>
+        </div>
+        <p class="run-root-cause"><strong>Root cause</strong> The subtotal reducer in <code>renderCart()</code> special-cased <code>burger</code>, always multiplying its price by 1 instead of the cart quantity.</p>
+        <div class="run-links">
+          <a href="https://github.com/woodstock-thebrid/video2pr/pull/2" target="_blank" rel="noopener noreferrer">Pull request #2 ↗</a>
+          <a href="https://app.devin.ai/sessions/42d5d1fbe4454f108cd9cefb1ee35000" target="_blank" rel="noopener noreferrer">Devin session ↗</a>
+        </div>
+      </article>
+    </section>
+  </main>
+  <footer class="runs-footer"><span>video2pr</span><span>These fix PRs are intentionally left unmerged so the planted bugs stay live for the demo.</span></footer>
+</body>
+</html>
