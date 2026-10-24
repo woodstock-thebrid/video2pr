@@ -1,13 +1,17 @@
+import json
 import os
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
 API_BASE = "https://api.devin.ai"
 DEFAULT_ORG_ID = "org-8df7501a85724235b32b5e64a28da839"
+
+DEVIN_FIX_INSTRUCTIONS = """Serve demo-app/ locally with `python3 -m http.server`, then reproduce the bug in a browser by following the steps above. Take a screenshot showing the bug. Make the minimal fix, then take another screenshot to verify the fix. Open a PR against `main` titled `Fix: {title}`. The PR description must include the bug report, the root cause in 1–2 sentences, and the before/after screenshots. Do not touch unrelated files."""
 
 DEVIN_PROMPT_TEMPLATE = """Work in the repository {target_repo}.
 
@@ -21,7 +25,7 @@ Actual: {actual}
 Suspected area: {suspected_area}
 Severity: {severity}
 
-Serve demo-app/ locally with `python3 -m http.server`, then reproduce the bug in a browser by following the steps above. Take a screenshot showing the bug. Make the minimal fix, then take another screenshot to verify the fix. Open a PR against `main` titled `Fix: {title}`. The PR description must include the bug report, the root cause in 1–2 sentences, and the before/after screenshots. Do not touch unrelated files."""
+{fix_instructions}"""
 
 _mock_sessions: dict[str, dict[str, object]] = {}
 _MOCK_MILESTONES = [
@@ -30,6 +34,18 @@ _MOCK_MILESTONES = [
     "Found the relevant UI code; preparing a focused fix.",
     "Verifying the change and opening a pull request.",
 ]
+_MOCK_VISION_REPORT = {
+    "title": "Tech Tower Burger quantity is omitted from the subtotal",
+    "page": "GT Dining order page",
+    "steps": [
+        "Open GT Dining and add one Tech Tower Burger.",
+        "Click the plus control once so the cart quantity is 2.",
+    ],
+    "expected": "The subtotal should be $25.00 for two Tech Tower Burgers at $12.50 each.",
+    "actual": "The cart shows quantity 2, but the subtotal is $12.50.",
+    "suspected_area": "The burger subtotal calculation in demo-app/app.js does not multiply by quantity.",
+    "severity": "medium",
+}
 
 
 def build_prompt(report: dict[str, object]) -> str:
@@ -44,7 +60,29 @@ def build_prompt(report: dict[str, object]) -> str:
         actual=report["actual"],
         suspected_area=report["suspected_area"],
         severity=report["severity"],
+        fix_instructions=DEVIN_FIX_INSTRUCTIONS.format(title=report["title"]),
     )
+
+
+def build_vision_prompt(note: str | None, attachment_urls: list[str]) -> str:
+    target_repo = os.getenv("TARGET_REPO", "woodstock-thebrid/video2pr")
+    note_text = note.strip() if note and note.strip() else "No optional note was provided."
+    attachment_lines = "\n".join(f'ATTACHMENT:"{url}"' for url in attachment_urls)
+    fix_instructions = DEVIN_FIX_INSTRUCTIONS.format(title="the title from the structured bug report")
+    prompt = f"""Work in the repository {target_repo}.
+
+The attached images are frames sampled at 1 fps, in order, from a screen recording of a bug in the web app in `demo-app/` (GT Dining).
+
+User note (context for the bug report):
+{note_text}
+
+Step 1: Study every frame and write a complete bug report. Immediately submit it as structured output with the fields title, page, steps, expected, actual, suspected_area, and severity BEFORE reproducing the bug or changing files. Be concrete: name the menu items and controls visible in the frames and include exact dollar amounts shown.
+
+Step 2 onward: After submitting the structured bug report, follow these instructions:
+{fix_instructions}
+
+{attachment_lines}"""
+    return prompt.rstrip()
 
 
 def _mock_enabled() -> bool:
@@ -71,12 +109,54 @@ def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {os.environ['DEVIN_API_KEY']}"}
 
 
-def create_session(prompt: str, title: str) -> dict[str, str]:
+def upload_attachment(path: Path) -> str:
+    if _mock_enabled():
+        return f"https://mock.devin.ai/attachments/{quote(path.name)}"
+
+    with path.open("rb") as attachment:
+        files = {"file": (path.name, attachment, "image/jpeg")}
+        if _api_version() == "v3":
+            response = _request("POST", f"{_org_base()}/attachments", headers=_headers(), files=files)
+            url = response.json().get("url")
+            if not isinstance(url, str):
+                raise RuntimeError("Devin attachment response did not include a URL.")
+            return url
+        response = _request("POST", "/v1/attachments", headers=_headers(), files=files)
+
+    try:
+        value = response.json()
+    except ValueError:
+        value = response.text
+    if isinstance(value, str):
+        return value.strip().strip('"')
+    if isinstance(value, dict) and isinstance(value.get("url"), str):
+        return value["url"]
+    raise RuntimeError("Devin attachment response did not include a URL.")
+
+
+def _with_attachment_lines(prompt: str, attachment_urls: list[str] | None) -> str:
+    lines = [f'ATTACHMENT:"{url}"' for url in attachment_urls or []]
+    existing = set(prompt.splitlines())
+    missing = [line for line in lines if line not in existing]
+    return f"{prompt.rstrip()}\n\n{chr(10).join(missing)}" if missing else prompt
+
+
+def create_session(
+    prompt: str,
+    title: str,
+    structured_output_schema: dict[str, object] | None = None,
+    attachment_urls: list[str] | None = None,
+) -> dict[str, str]:
     if _mock_enabled():
         session_id = f"mock-{uuid.uuid4().hex[:12]}"
-        _mock_sessions[session_id] = {"created_at": time.monotonic(), "title": title}
+        _mock_sessions[session_id] = {
+            "created_at": time.monotonic(),
+            "title": title,
+            "structured_output_enabled": structured_output_schema is not None,
+        }
         return {"session_id": session_id, "url": f"https://app.devin.ai/sessions/{session_id}"}
 
+    prompt = _with_attachment_lines(prompt, attachment_urls)
     if _api_version() == "v3":
         path = f"{_org_base()}/sessions"
         body = {
@@ -92,8 +172,24 @@ def create_session(prompt: str, title: str) -> dict[str, str]:
             "idempotent": False,
             "tags": ["video2pr"],
         }
+    if structured_output_schema is not None:
+        body["structured_output_schema"] = structured_output_schema
+    if _api_version() == "v3" and attachment_urls:
+        body["attachment_urls"] = attachment_urls
     data = _request("POST", path, headers=_headers(), json=body).json()
     return {"session_id": data["session_id"], "url": data.get("url") or data.get("session_url", "")}
+
+
+def _normalize_structured_output(value: object) -> dict[str, object] | None:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 def _messages(items: list[dict[str, object]], *, v3: bool) -> list[dict[str, object]]:
@@ -135,6 +231,7 @@ def _v1_session(session_id: str) -> dict[str, object]:
         "pr_url": pull_request.get("url") if isinstance(pull_request, dict) else None,
         "messages": _messages(data.get("messages") or [], v3=False),
         "raw_status": status,
+        "structured_output": _normalize_structured_output(data.get("structured_output")),
     }
 
 
@@ -166,6 +263,7 @@ def _v3_session(session_id: str) -> dict[str, object]:
         "pr_url": first_pull_request.get("pr_url") if first_pull_request else None,
         "messages": _messages(message_data.get("items") or [], v3=True),
         "raw_status": f"{status}:{detail}" if detail else status,
+        "structured_output": _normalize_structured_output(data.get("structured_output")),
     }
 
 
@@ -178,6 +276,11 @@ def get_session(session_id: str) -> dict[str, object]:
         message_count = min(int(progress * len(_MOCK_MILESTONES)) + 1, len(_MOCK_MILESTONES))
         timestamp = datetime.now(timezone.utc).isoformat()
         finished = progress >= 1
+        structured_output = (
+            _MOCK_VISION_REPORT
+            if session.get("structured_output_enabled") and progress >= 0.2
+            else None
+        )
         return {
             "state": "finished" if finished else "working",
             "pr_url": f"https://github.com/woodstock-thebrid/video2pr/pull/{int(session_id[-4:], 16) % 900 + 100}"
@@ -188,6 +291,7 @@ def get_session(session_id: str) -> dict[str, object]:
                 for message in _MOCK_MILESTONES[:message_count]
             ],
             "raw_status": "finished" if finished else "working",
+            "structured_output": structured_output,
         }
 
     if _api_version() == "v3":

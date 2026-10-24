@@ -38,7 +38,10 @@ function renderStepper(stage) {
   }).join("");
 }
 
-function formatStage(stage) {
+function formatStage(stage, job) {
+  if (stage === "analyzing" && job?.vision_provider === "devin") {
+    return "Devin is watching the recording";
+  }
   return ({
     extracting: "Extracting video frames",
     analyzing: "Writing your bug report",
@@ -63,7 +66,10 @@ function renderJob(job) {
   let reportMarkup = "";
   if (job.report) {
     const report = job.report;
-    reportMarkup = `<article class="report-card"><div class="report-top"><span class="report-label">BUG REPORT</span><span class="severity severity-${escapeHtml(report.severity)}">${escapeHtml(report.severity)}</span></div><h3>${escapeHtml(report.title)}</h3><p class="report-page">${escapeHtml(report.page)}</p><div class="report-facts"><div><span>EXPECTED</span><p>${escapeHtml(report.expected)}</p></div><div><span>ACTUAL</span><p>${escapeHtml(report.actual)}</p></div></div><div class="report-steps"><strong>REPRODUCTION</strong><ol>${(report.steps || []).map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></div><p class="suspected"><strong>Suspected area</strong> ${escapeHtml(report.suspected_area)}</p></article>`;
+    const authorBadge = job.vision_provider === "devin"
+      ? '<span class="report-author">Written by Devin</span>'
+      : "";
+    reportMarkup = `<article class="report-card"><div class="report-top"><span class="report-label">BUG REPORT</span>${authorBadge}<span class="severity severity-${escapeHtml(report.severity)}">${escapeHtml(report.severity)}</span></div><h3>${escapeHtml(report.title)}</h3><p class="report-page">${escapeHtml(report.page)}</p><div class="report-facts"><div><span>EXPECTED</span><p>${escapeHtml(report.expected)}</p></div><div><span>ACTUAL</span><p>${escapeHtml(report.actual)}</p></div></div><div class="report-steps"><strong>REPRODUCTION</strong><ol>${(report.steps || []).map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></div><p class="suspected"><strong>Suspected area</strong> ${escapeHtml(report.suspected_area)}</p></article>`;
   }
   const messagesMarkup = job.devin_messages?.length
     ? `<div class="result-block messages-block"><div class="block-title"><span>DEVIN ACTIVITY</span><span>${job.devin_messages.length} updates</span></div><div class="message-feed">${job.devin_messages.slice(-8).map(message => `<div class="message"><span class="message-dot"></span><p>${escapeHtml(message.message)}</p></div>`).join("")}</div></div>`
@@ -75,7 +81,10 @@ function renderJob(job) {
   const waitingMarkup = job.devin_state === "waiting_for_user" && job.devin_session_url
     ? `<a class="needs-input" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Devin needs input — open session ↗</a>`
     : "";
-  const statusMarkup = waitingMarkup || `<span>${formatStage(job.stage)}</span>`;
+  const analyzingSessionMarkup = job.vision_provider === "devin" && job.stage === "analyzing" && job.devin_session_url
+    ? `<a class="needs-input session-link" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Open Devin session ↗</a>`
+    : "";
+  const statusMarkup = waitingMarkup || `<span>${formatStage(job.stage, job)}</span>${analyzingSessionMarkup}`;
   document.querySelector("#job-content").innerHTML = `
     <div class="job-status"><span class="status-orbit ${terminalStages.has(job.stage) ? "settled" : ""}"></span>${statusMarkup}<small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
     ${frameMarkup}${reportMarkup}${messagesMarkup}${prMarkup}${errorMarkup}`;
@@ -89,7 +98,7 @@ function renderRecent(jobs) {
   document.querySelector("#recent-jobs").innerHTML = recent.length ? recent.slice(0, 8).map(job => `
     <button class="recent-job ${job.job_id === selectedJobId ? "selected" : ""}" data-job="${escapeHtml(job.job_id)}">
       <span class="recent-icon">${job.pr_url ? "✓" : "↗"}</span>
-      <span class="recent-job-copy"><strong>${escapeHtml(job.report?.title || "Video investigation")}</strong><small>${escapeHtml(formatStage(job.stage))}</small></span>
+      <span class="recent-job-copy"><strong>${escapeHtml(job.report?.title || "Video investigation")}</strong><small>${escapeHtml(formatStage(job.stage, job))}</small></span>
       <span class="recent-chevron">→</span>
     </button>`).join("") : '<p class="recent-empty">Your recent jobs will show up here.</p>';
 }

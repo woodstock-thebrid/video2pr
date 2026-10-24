@@ -11,7 +11,7 @@ Phone/browser video
 FastAPI upload ──► ffprobe + ffmpeg frame extraction
         │
         ▼
-Vision report (OpenAI / Anthropic / local mock)
+Vision report (Devin structured output / OpenAI / Anthropic / local mock)
         │
         ▼
 Devin API session (or simulated session)
@@ -32,6 +32,8 @@ uvicorn backend.main:app --reload --port 8000
 
 The frontend is available at <http://localhost:8000>, and the sample GT Dining app is at <http://localhost:8000/demo/>.
 
-Without provider keys, video reports use a mock report and Devin sessions run in simulation mode. Add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for vision analysis. Add `DEVIN_API_KEY` to create real Devin sessions: `cog_` personal access tokens use Devin API v3, while legacy tokens use v1. `DEVIN_ORG_ID` selects the v3 organization, and `MOCK_DEVIN=1` forces simulation. The simulated session takes about 40 seconds by default; set `MOCK_DEVIN_SECONDS` to change that duration.
+Set `VISION_PROVIDER` to `devin`, `openai`, `anthropic`, or `mock` to choose the vision provider explicitly. When unset, a live Devin key is preferred, followed by OpenAI, Anthropic, then the local mock. Devin vision attaches the ordered video frames and asks Devin to submit a structured bug report before reproducing the issue. Set `VISION_PROVIDER=devin` with `MOCK_DEVIN=1` to rehearse that flow without creating a real session.
+
+Without provider keys, video reports use a mock report and Devin sessions run in simulation mode. Add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for external vision analysis. Add `DEVIN_API_KEY` to create real Devin sessions: `cog_` personal access tokens use Devin API v3, while legacy tokens use v1. `DEVIN_ORG_ID` selects the v3 organization, and `MOCK_DEVIN=1` forces session simulation. The simulated session takes about 40 seconds by default; set `MOCK_DEVIN_SECONDS` to change that duration.
 
 `run.sh` starts the same development server.
