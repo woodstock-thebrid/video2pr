@@ -72,8 +72,12 @@ function renderJob(job) {
     ? `<a class="pr-button" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noreferrer"><span><small>READY FOR REVIEW</small>View pull request</span><span aria-hidden="true">↗</span></a>`
     : "";
   const errorMarkup = job.error ? `<div class="error-card"><strong>We couldn't finish this run.</strong><p>${escapeHtml(job.error)}</p></div>` : "";
+  const waitingMarkup = job.devin_state === "waiting_for_user" && job.devin_session_url
+    ? `<a class="needs-input" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Devin needs input — open session ↗</a>`
+    : "";
+  const statusMarkup = waitingMarkup || `<span>${formatStage(job.stage)}</span>`;
   document.querySelector("#job-content").innerHTML = `
-    <div class="job-status"><span class="status-orbit ${terminalStages.has(job.stage) ? "settled" : ""}"></span><span>${formatStage(job.stage)}</span><small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
+    <div class="job-status"><span class="status-orbit ${terminalStages.has(job.stage) ? "settled" : ""}"></span>${statusMarkup}<small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
     ${frameMarkup}${reportMarkup}${messagesMarkup}${prMarkup}${errorMarkup}`;
   renderRecent();
 }
@@ -166,4 +170,13 @@ document.querySelector("#recent-jobs").addEventListener("click", async event => 
   if (!terminalStages.has(window.currentJob?.stage)) pollTimer = setInterval(refreshSelected, 2000);
 });
 
-refreshRecent();
+async function initialize() {
+  await refreshRecent();
+  const jobId = new URLSearchParams(window.location.search).get("job");
+  if (!jobId) return;
+  selectedJobId = jobId;
+  await refreshSelected();
+  if (!terminalStages.has(window.currentJob?.stage)) pollTimer = setInterval(refreshSelected, 2000);
+}
+
+initialize();
