@@ -9,7 +9,7 @@
 - Tab 2: **GT Dining demo app** (`/demo/`) at a browser width where the bug is obvious.
 - Tab 3: **Backup PR**: [PR #4](https://github.com/woodstock-thebrid/video2pr/pull/4) (search bug, fixed from video only, no text hint).
 - Tab 4: **Mock mode** (backup preview link) in case Wi-Fi or Devin is slow.
-- Phone: screen recording ready, or use the pre-recorded `bug1_quantity.mp4` / `bug4_double_order.mp4`.
+- Phone: screen recording ready, or use the pre-recorded `docs/media/bug1_quantity.mp4` / `docs/media/bug4_double_order.mp4`.
 - Live bug to use: **bug 1 (burger quantity)** or **bug 4 (double order)**. Bugs 2/3 already have PRs, so use them as backups.
 - **Never merge the fix PRs** (#2, #4, and any new ones). Merging removes the planted bugs.
 
@@ -72,9 +72,19 @@ upload video ─► ffmpeg (1 fps, ≤12 frames)
 - **"Why not just GPT-4o for the report?"** One agent owns the whole loop: the same session that understood the video also reproduces and verifies the fix, so there's no context lost between handoffs.
 - **"Real-world use?"** Embed a "record bug" button in any app (support widget, QA, beta testers) and point it at your repo.
 
+### One-line answers (memorize these)
+| Question | One line |
+|---|---|
+| Is the bug real? | Planted on purpose so the demo is reliable, and we planted four different kinds: math, mobile CSS, search logic, double-submit. |
+| What if Devin gets it wrong? | It only opens a PR; a human reviews it, with before/after screenshots as proof. |
+| Why not just GPT-4o for the report? | The same Devin session that understood the video also reproduces and verifies the fix, so no context is lost in a handoff. |
+| Real-world use? | A "record a bug" button in any app (support, QA, beta testers) that points at your repo. |
+| How is this different from Sentry / session replay? | Those show you what happened; we go from a plain phone video to a reviewable fix, with no SDK installed in the app. |
+| What if the video is unclear? | The bug report card shows exactly what Devin understood before it touches code, and the optional note field adds the missing context. |
+
 ## Backup plan
 | Problem | Do this |
 |---|---|
 | Devin slow (>2 min) | Talk through "why it matters", then show the backup PR #4 tab |
 | Wi-Fi / API down | Switch to the mock-mode tab and run the same flow |
-| Upload fails | Use the pre-recorded `bug1_quantity.mp4` |
+| Upload fails | Use the pre-recorded `docs/media/bug1_quantity.mp4` |
