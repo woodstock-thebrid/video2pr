@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 import time
@@ -7,10 +8,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.devin import build_vision_prompt, create_session, get_session, upload_attachment
-from backend.main import app
-from backend.jobs import JOBS
-from backend.report import BugReport, parse_report_json, select_vision_provider
+from backend.devin import build_session_schema, build_vision_prompt, create_session, get_session, upload_attachment
+from backend.main import _COMPARISON_IMAGE_CACHE, app
+from backend.jobs import JOBS, _poll_session, create_job, extract_before_after
+from backend.mock_bugs import mock_bug_for_upload
+from backend.report import BugReport, generate_report, parse_report_json, select_vision_provider
 from backend.video import extract_frames
 
 
@@ -55,6 +57,101 @@ def test_parse_json_fence() -> None:
     assert isinstance(report, BugReport)
     assert report.title == "Cart total is wrong"
     assert report.steps == ["Add two burgers"]
+
+
+def test_session_schema_has_optional_comparison_fields() -> None:
+    schema = build_session_schema()
+
+    assert "$ref" not in json.dumps(schema)
+    assert set(schema["required"]) == {
+        "title", "page", "steps", "expected", "actual", "suspected_area", "severity"
+    }
+    assert all(
+        schema["properties"][name]["type"] == "string"
+        for name in ("before_screenshot_url", "after_screenshot_url", "root_cause", "code_diff")
+    )
+    assert not set(("before_screenshot_url", "after_screenshot_url", "root_cause", "code_diff")) & set(schema["required"])
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("![AFTER](https://img/after.png) ![Before](https://img/before.png)",
+         ("https://img/before.png", "https://img/after.png")),
+        ("![one](https://img/one.png) ![two](https://img/two.png)",
+         ("https://img/one.png", "https://img/two.png")),
+        ('<img alt="after" src="https://img/after.png"><img src="https://img/before.png" alt="before">',
+         ("https://img/before.png", "https://img/after.png")),
+        ("No screenshots here.", (None, None)),
+    ],
+)
+def test_extract_before_after(body: str, expected: tuple[str | None, str | None]) -> None:
+    assert extract_before_after(body) == expected
+
+
+def test_polling_continues_after_pr_until_comparison_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.01")
+    responses = iter(
+        [
+            {"state": "working", "pr_url": "https://github.com/example/repo/pull/9", "messages": [], "structured_output": None},
+            {
+                "state": "working",
+                "pr_url": "https://github.com/example/repo/pull/9",
+                "messages": [],
+                "structured_output": {
+                    "before_screenshot_url": "https://img/before.png",
+                    "after_screenshot_url": "https://img/after.png",
+                    "root_cause": "Quantity was omitted.",
+                    "code_diff": "-old\n+new",
+                },
+            },
+        ]
+    )
+    monkeypatch.setattr("backend.jobs.get_session", lambda _session_id: next(responses))
+    job: dict[str, object] = {
+        "stage": "devin_working", "timestamps": {}, "report": {"title": "Bug"},
+        "devin_messages": [], "devin_state": None, "pr_url": None,
+        "comparison": None, "comparison_status": None,
+    }
+
+    asyncio.run(_poll_session(job, "real-session", devin_vision=False))
+
+    assert job["stage"] == "pr_opened"
+    assert job["comparison_status"] == "ready"
+    assert job["comparison"]["before_url"] == "https://img/before.png"
+    assert job["comparison"]["root_cause"] == "Quantity was omitted."
+
+
+def test_comparison_timeout_falls_back_to_pr_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.01")
+    monkeypatch.setenv("COMPARISON_TIMEOUT_SECONDS", "0")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-test")
+    monkeypatch.setattr(
+        "backend.jobs.get_session",
+        lambda _session_id: {
+            "state": "working", "pr_url": "https://github.com/example/repo/pull/15",
+            "messages": [], "structured_output": None,
+        },
+    )
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, json={"body": "No screenshots in this PR."})
+
+    monkeypatch.setattr("backend.jobs.httpx.get", fake_get)
+    job: dict[str, object] = {
+        "stage": "devin_working", "timestamps": {}, "report": {"title": "Bug"},
+        "devin_messages": [], "devin_state": None, "pr_url": None,
+        "comparison": None, "comparison_status": None,
+    }
+
+    asyncio.run(_poll_session(job, "real-session", devin_vision=False))
+
+    assert calls[0][0] == "https://api.github.com/repos/example/repo/pulls/15"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer github-test"
+    assert job["stage"] == "pr_opened"
+    assert job["comparison_status"] == "unavailable"
 
 
 def test_mock_pipeline_returns_pr(monkeypatch: pytest.MonkeyPatch, sample_video: Path) -> None:
@@ -445,3 +542,224 @@ def test_devin_vision_mock_pipeline_uses_structured_report(
     assert "$25.00" in job["report"]["expected"]
     assert job["vision_provider"] == "devin"
     assert job["pr_url"]
+    assert job["comparison_status"] == "ready"
+    assert job["comparison"]["before_url"] == "/mock/before.png"
+    assert job["comparison"]["after_url"] == "/mock/after.png"
+
+
+def test_batch_jobs_share_id_and_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_video: Path,
+) -> None:
+    monkeypatch.setenv("VISION_PROVIDER", "devin")
+    monkeypatch.setenv("MOCK_DEVIN", "1")
+    monkeypatch.setenv("MOCK_DEVIN_SECONDS", "2")
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.05")
+    monkeypatch.setenv("MAX_BATCH_VIDEOS", "4")
+    for name in ("DEVIN_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    JOBS.clear()
+    video_content = sample_video.read_bytes()
+    files = [
+        ("videos", (f"recording-{index}.mp4", video_content, "video/mp4"))
+        for index in range(3)
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/reports/batch",
+            files=files,
+            data={"note": "Please investigate each recording."},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        batch_id = result["batch_id"]
+        job_ids = result["job_ids"]
+        assert len(job_ids) == 3
+
+        saw_concurrent_jobs = False
+        jobs: list[dict[str, object]] = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            jobs = [client.get(f"/api/reports/{job_id}").json() for job_id in job_ids]
+            active_count = sum(
+                job["stage"] in {"analyzing", "dispatching", "devin_working"}
+                for job in jobs
+            )
+            if active_count >= 2:
+                saw_concurrent_jobs = True
+            if all(job["stage"] == "pr_opened" for job in jobs):
+                break
+            time.sleep(0.05)
+
+        assert saw_concurrent_jobs
+        assert all(job["stage"] == "pr_opened" for job in jobs), jobs
+        assert all(job["batch_id"] == batch_id for job in jobs)
+        listed_jobs = {
+            job["job_id"]: job
+            for job in client.get("/api/reports").json()
+            if job["job_id"] in job_ids
+        }
+        assert len(listed_jobs) == 3
+        assert all(job["batch_id"] == batch_id for job in listed_jobs.values())
+        assert {job["upload_name"] for job in jobs} == {
+            "recording-0.mp4", "recording-1.mp4", "recording-2.mp4"
+        }
+        assert all(job["comparison_status"] == "ready" for job in jobs)
+
+
+def test_batch_rejects_more_than_configured_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAX_BATCH_VIDEOS", "4")
+    files = [
+        ("videos", (f"recording-{index}.mp4", b"not processed", "video/mp4"))
+        for index in range(5)
+    ]
+
+    with TestClient(app) as client:
+        response = client.post("/api/reports/batch", files=files)
+
+    assert response.status_code == 400
+    assert "between 1 and 4" in response.json()["detail"]
+
+
+def test_batch_rejects_zero_files() -> None:
+    with TestClient(app) as client:
+        response = client.post("/api/reports/batch")
+
+    assert response.status_code in {400, 422}
+
+
+def test_comparison_attachment_proxy_authenticates_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "cog-test-token")
+    monkeypatch.setenv("VISION_PROVIDER", "mock")
+    JOBS.clear()
+    _COMPARISON_IMAGE_CACHE.clear()
+    job_id, _ = create_job("proxy-test.mp4")
+    JOBS[job_id]["comparison"] = {
+        "before_url": "https://app.devin.ai/attachments/before-id/before.png",
+        "after_url": "https://app.devin.ai/attachments/after-id/after.png",
+        "root_cause": None,
+        "code_diff": None,
+    }
+    JOBS[job_id]["comparison_status"] = "ready"
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, content=b"png-bytes", headers={"content-type": "image/png"})
+
+    monkeypatch.setattr("backend.main.httpx.get", fake_get)
+    with TestClient(app) as client:
+        job = client.get(f"/api/reports/{job_id}").json()
+        assert job["comparison"]["before_url"].endswith("/before.png")
+        assert job["comparison"]["before_src"] == f"/api/reports/{job_id}/comparison/before"
+        assert job["comparison"]["after_src"] == f"/api/reports/{job_id}/comparison/after"
+        before = client.get(job["comparison"]["before_src"])
+        cached_before = client.get(job["comparison"]["before_src"])
+        after = client.get(job["comparison"]["after_src"])
+
+    assert before.content == b"png-bytes"
+    assert before.headers["content-type"] == "image/png"
+    assert before.headers["cache-control"] == "max-age=3600"
+    assert cached_before.content == b"png-bytes"
+    assert after.content == b"png-bytes"
+    assert [call[0] for call in calls] == [
+        "https://api.devin.ai/v1/attachments/before-id/before.png",
+        "https://api.devin.ai/v1/attachments/after-id/after.png",
+    ]
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer cog-test-token"
+    JOBS.pop(job_id, None)
+    _COMPARISON_IMAGE_CACHE.clear()
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://app.devin.ai/api/presigned_proxy?token=example",
+        "/mock/search-before.png",
+    ],
+)
+def test_comparison_proxy_redirects_other_urls(source_url: str) -> None:
+    JOBS.clear()
+    job_id, _ = create_job("redirect-test.mp4")
+    JOBS[job_id]["comparison"] = {
+        "before_url": source_url,
+        "after_url": "/mock/search-after.png",
+        "root_cause": None,
+        "code_diff": None,
+    }
+    JOBS[job_id]["comparison_status"] = "ready"
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/reports/{job_id}/comparison/before",
+            follow_redirects=False,
+        )
+    assert response.status_code == 307
+    assert response.headers["location"] == source_url
+    JOBS.pop(job_id, None)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "which", "has_comparison"),
+    [("missing-job", "before", True), ("missing-comparison", "before", False), ("bad-which", "side", True)],
+)
+def test_comparison_proxy_returns_404_for_missing_resources(
+    job_id: str,
+    which: str,
+    has_comparison: bool,
+) -> None:
+    JOBS.clear()
+    if job_id != "missing-job":
+        job_id, _ = create_job(job_id)
+        if has_comparison:
+            JOBS[job_id]["comparison"] = {
+                "before_url": "/mock/before.png",
+                "after_url": "/mock/after.png",
+            }
+            JOBS[job_id]["comparison_status"] = "ready"
+    with TestClient(app) as client:
+        response = client.get(f"/api/reports/{job_id}/comparison/{which}")
+    assert response.status_code == 404
+    JOBS.pop(job_id, None)
+
+
+@pytest.mark.parametrize(
+    ("filename", "title"),
+    [
+        ("bug1_quantity.mp4", "Tech Tower Burger quantity is omitted from the subtotal"),
+        ("bug3_search.mp4", "Multi-word menu searches hide matching items"),
+        ("bug4_double_order.mp4", "Rapid double-click on Checkout places two orders"),
+        ("bug2_checkout_mobile.mp4", "Fixed mobile banner covers the Checkout button below 420px"),
+    ],
+)
+def test_mock_reports_match_upload_filenames(
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    title: str,
+) -> None:
+    monkeypatch.setenv("VISION_PROVIDER", "mock")
+    for name in ("DEVIN_API_KEY", "MOCK_DEVIN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    report = generate_report([], upload_name=filename)
+    assert report.title == title
+    assert mock_bug_for_upload(filename)["report"]["title"] == title
+
+
+def test_mock_vision_session_keeps_filename_for_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MOCK_DEVIN", "1")
+    monkeypatch.setenv("MOCK_DEVIN_SECONDS", "0.05")
+    monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+    session = create_session(
+        "prompt",
+        "search",
+        build_session_schema(),
+        upload_name="bug3_search.mp4",
+    )
+    time.sleep(0.15)
+    structured = get_session(session["session_id"])["structured_output"]
+    assert structured["title"] == "Multi-word menu searches hide matching items"
+    assert structured["before_screenshot_url"] == "/mock/search-before.png"
