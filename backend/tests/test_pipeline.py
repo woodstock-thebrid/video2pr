@@ -544,3 +544,85 @@ def test_devin_vision_mock_pipeline_uses_structured_report(
     assert job["comparison_status"] == "ready"
     assert job["comparison"]["before_url"] == "/mock/before.png"
     assert job["comparison"]["after_url"] == "/mock/after.png"
+
+
+def test_batch_jobs_share_id_and_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_video: Path,
+) -> None:
+    monkeypatch.setenv("VISION_PROVIDER", "devin")
+    monkeypatch.setenv("MOCK_DEVIN", "1")
+    monkeypatch.setenv("MOCK_DEVIN_SECONDS", "2")
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.05")
+    monkeypatch.setenv("MAX_BATCH_VIDEOS", "4")
+    for name in ("DEVIN_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    JOBS.clear()
+    video_content = sample_video.read_bytes()
+    files = [
+        ("videos", (f"recording-{index}.mp4", video_content, "video/mp4"))
+        for index in range(3)
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/reports/batch",
+            files=files,
+            data={"note": "Please investigate each recording."},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        batch_id = result["batch_id"]
+        job_ids = result["job_ids"]
+        assert len(job_ids) == 3
+
+        saw_concurrent_jobs = False
+        jobs: list[dict[str, object]] = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            jobs = [client.get(f"/api/reports/{job_id}").json() for job_id in job_ids]
+            active_count = sum(
+                job["stage"] in {"analyzing", "dispatching", "devin_working"}
+                for job in jobs
+            )
+            if active_count >= 2:
+                saw_concurrent_jobs = True
+            if all(job["stage"] == "pr_opened" for job in jobs):
+                break
+            time.sleep(0.05)
+
+        assert saw_concurrent_jobs
+        assert all(job["stage"] == "pr_opened" for job in jobs), jobs
+        assert all(job["batch_id"] == batch_id for job in jobs)
+        listed_jobs = {
+            job["job_id"]: job
+            for job in client.get("/api/reports").json()
+            if job["job_id"] in job_ids
+        }
+        assert len(listed_jobs) == 3
+        assert all(job["batch_id"] == batch_id for job in listed_jobs.values())
+        assert {job["upload_name"] for job in jobs} == {
+            "recording-0.mp4", "recording-1.mp4", "recording-2.mp4"
+        }
+        assert all(job["comparison_status"] == "ready" for job in jobs)
+
+
+def test_batch_rejects_more_than_configured_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAX_BATCH_VIDEOS", "4")
+    files = [
+        ("videos", (f"recording-{index}.mp4", b"not processed", "video/mp4"))
+        for index in range(5)
+    ]
+
+    with TestClient(app) as client:
+        response = client.post("/api/reports/batch", files=files)
+
+    assert response.status_code == 400
+    assert "between 1 and 4" in response.json()["detail"]
+
+
+def test_batch_rejects_zero_files() -> None:
+    with TestClient(app) as client:
+        response = client.post("/api/reports/batch")
+
+    assert response.status_code in {400, 422}
