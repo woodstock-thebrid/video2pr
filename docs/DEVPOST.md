@@ -6,7 +6,9 @@
 
 **Links**
 - Repo: https://github.com/woodstock-thebrid/video2pr
-- Demo GIF: https://github.com/woodstock-thebrid/video2pr/blob/main/docs/media/walkthrough.gif
+- Demo video (real mode): https://github.com/woodstock-thebrid/video2pr/blob/main/docs/media/real_mode_demo.mp4
+- Slides: https://github.com/woodstock-thebrid/video2pr/blob/main/docs/media/video2pr_slides.pdf
+- Backup-mode GIF: https://github.com/woodstock-thebrid/video2pr/blob/main/docs/media/walkthrough.gif
 - Real PRs opened by the pipeline: [#4](https://github.com/woodstock-thebrid/video2pr/pull/4) (multi-word search), [#8](https://github.com/woodstock-thebrid/video2pr/pull/8) (burger subtotal)
 
 ## Inspiration
@@ -33,7 +35,8 @@ Upload a screen recording of a web-app bug, or press "Report a bug" inside the a
 - Shared GitHub/Devin access across teammates' accounts and organizations.
 
 ## Accomplishments that we're proud of
-- A real end-to-end run: bug report at about **0:33**, PR opened at about **1:35**, before/after on the page at about **2:30**.
+- A real end-to-end run from the in-app "Report a bug" button: bug report at **0:33**, PR opened at **1:24**, before/after on the page at about **1:56** ([PR #14](https://github.com/woodstock-thebrid/video2pr/pull/14)).
+- An earlier rehearsal: bug report at about **0:33**, PR opened at about **1:35**, before/after on the page at about **2:30**.
 - Real PRs opened by the pipeline: [#4](https://github.com/woodstock-thebrid/video2pr/pull/4) and [#8](https://github.com/woodstock-thebrid/video2pr/pull/8).
 - One agent owns the whole loop, from watching the video to proving the fix. Nothing merges without human review.
 
