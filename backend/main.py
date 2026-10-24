@@ -41,7 +41,7 @@ async def report_status(job_id: str) -> dict[str, object]:
     return job
 
 
-@app.get("/demo", include_in_schema=False)
+@app.api_route("/demo", methods=["GET", "HEAD"], include_in_schema=False)
 async def demo_redirect() -> RedirectResponse:
     return RedirectResponse("/demo/")
 
