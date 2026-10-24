@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GT Dining — Order ahead</title>
+  <link rel="stylesheet" href="/demo/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#" aria-label="GT Dining home">
+      <span class="brand-mark">GT</span>
+      <span><strong>GT Dining</strong><small>Georgia Tech · Atlanta, GA</small></span>
+    </a>
+    <a class="header-link" href="#menu">Order ahead <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">GOOD FOOD. GOOD COMPANY.</p>
+        <h1>Your campus<br>favorites, <em>ready.</em></h1>
+        <p class="hero-text">Made fresh, packed with care, and ready when you are.</p>
+        <a class="hero-link" href="#menu">Explore the menu <span aria-hidden="true">↓</span></a>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="sun"></div>
+        <div class="plate"><svg class="hero-sandwich" viewBox="0 0 140 100" aria-hidden="true" focusable="false"><path d="M20 44 70 16l50 28v10H20z" fill="#e9b83e" stroke="#14253d" stroke-width="4" stroke-linejoin="round"/><path d="M25 55h90l-8 11H33z" fill="#fffaf0" stroke="#14253d" stroke-width="3" stroke-linejoin="round"/><path d="m31 66 78 0-9 11H40z" fill="#537c59" stroke="#14253d" stroke-width="3" stroke-linejoin="round"/><path d="M38 78h64l-6 10H45z" fill="#b5643e" stroke="#14253d" stroke-width="3" stroke-linejoin="round"/></svg></div>
+        <div class="art-caption">FRESH FROM<br>THE KITCHEN</div>
+      </div>
+    </section>
+
+    <div class="content-grid" id="menu">
+      <section class="menu-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">THE DAILY LINEUP</p>
+            <h2>Made for your day.</h2>
+          </div>
+          <label class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"></circle><path d="m15.5 15.5 5 5"></path></svg>
+            <input id="search" type="search" placeholder="Search the menu" aria-label="Search the menu">
+          </label>
+        </div>
+        <div class="category-row"><span class="category active">All day</span><span class="category">Lunch</span><span class="category">Sides & drinks</span></div>
+        <div id="menu-items" class="menu-items" aria-live="polite"></div>
+        <p id="empty-state" class="empty-state" hidden>No menu items match that search.</p>
+      </section>
+
+      <aside class="cart-card" aria-label="Your order">
+        <div class="cart-title"><div><p class="eyebrow">YOUR ORDER</p><h2>Good choice.</h2></div><span id="cart-count" class="cart-count">0</span></div>
+        <div id="cart-items" class="cart-items"><p class="cart-empty">Your order is taking shape.</p></div>
+        <div class="cart-totals">
+          <div><span>Subtotal</span><strong id="subtotal">$0.00</strong></div>
+          <div><span>Tax <small>(8.9%)</small></span><strong id="tax">$0.00</strong></div>
+          <div class="total-row"><span>Total</span><strong id="total">$0.00</strong></div>
+        </div>
+        <button id="checkout" class="checkout-button" type="button">Checkout <span aria-hidden="true">→</span></button>
+        <p class="pickup-note"><span aria-hidden="true">◷</span> Pickup in about 15 minutes</p>
+        <div id="confirmation" class="confirmation" role="status" hidden></div>
+      </aside>
+    </div>
+  </main>
+  <footer class="site-footer"><span>GT Dining</span><span>Fuel your next big idea.</span></footer>
+  <div class="mobile-banner"><span>Hungry? Make today a little better.</span><span aria-hidden="true">✦</span></div>
+  <script src="/demo/app.js"></script>
+</body>
+</html>

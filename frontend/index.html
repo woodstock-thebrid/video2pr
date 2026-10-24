@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10253d">
+  <title>video2pr — From bug video to pull request</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="wordmark"><span class="mark">v2</span><span>video<span class="wordmark-accent">2</span>pr</span></a>
+    <div class="header-note"><span class="pulse-dot"></span> TURN A BUG INTO A FIX</div>
+    <a class="demo-link" href="/demo/" target="_blank" rel="noreferrer">Explore the demo app <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div>
+        <p class="eyebrow">LESS REPRO. MORE SHIP.</p>
+        <h1>Show us the bug.<br><em>We’ll take it from there.</em></h1>
+        <p class="intro-copy">Drop a screen recording. Get a clear bug report, then watch Devin reproduce it, fix it, and open a pull request.</p>
+      </div>
+      <div class="intro-stamp" aria-hidden="true"><span>VIDEO IN</span><b>→</b><span>FIX OUT</span></div>
+    </section>
+
+    <section class="workspace" aria-label="Submit a bug recording">
+      <div class="upload-panel">
+        <div class="panel-heading"><div><span class="number">01</span><h2>Start with a recording</h2></div><span class="optional">MP4 · MOV · WEBM</span></div>
+        <label id="drop-zone" class="drop-zone" for="video-file">
+          <input id="video-file" type="file" accept="video/*" capture="environment">
+          <span class="upload-icon" aria-hidden="true">↑</span>
+          <strong id="upload-title">Drop your video here</strong>
+          <span id="upload-subtitle">or <u>choose a file</u> from your device</span>
+          <span class="upload-hint">A short screen recording works best</span>
+        </label>
+        <label class="note-label" for="note">Anything else we should know? <span>OPTIONAL</span></label>
+        <textarea id="note" rows="2" placeholder="What did you expect to happen?"></textarea>
+        <button id="submit-button" class="submit-button" type="button" disabled><span>Analyze recording</span><span aria-hidden="true">→</span></button>
+        <p class="privacy-note"><span aria-hidden="true">◇</span> Your video is used only to investigate this bug.</p>
+      </div>
+
+      <div class="progress-panel">
+        <div class="panel-heading progress-heading"><div><span class="number">02</span><h2>Watch it get fixed</h2></div><span id="live-indicator" class="live-indicator"><i></i> LIVE</span></div>
+        <div id="empty-progress" class="empty-progress">
+          <div class="empty-illustration" aria-hidden="true"><span class="screen-shape"></span><span class="sparkle">✳</span><span class="arrow-shape">↗</span></div>
+          <strong>Your fix will take shape here.</strong>
+          <p>Submit a recording to see the frames, bug report, and Devin’s progress.</p>
+        </div>
+        <div id="job-view" hidden>
+          <div id="stage-stepper" class="stage-stepper"></div>
+          <div id="job-content" class="job-content"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="recent-section">
+      <div class="recent-heading"><div><p class="eyebrow">THE PAPER TRAIL</p><h2>Recent investigations</h2></div><span id="job-total" class="job-total">0 jobs</span></div>
+      <div id="recent-jobs" class="recent-jobs"><p class="recent-empty">Your recent jobs will show up here.</p></div>
+    </section>
+  </main>
+  <footer><span>video2pr</span><span>From screen recording to shipped fix.</span></footer>
+  <script src="/app.js"></script>
+</body>
+</html>
