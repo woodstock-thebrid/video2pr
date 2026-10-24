@@ -2,6 +2,12 @@
 
 Turn a phone screen recording of a web-app bug into a structured report and a Devin session that reproduces and fixes it.
 
+![video2pr real-mode demo: click "Report a bug" in the demo app, Devin writes the report, opens a PR in 1m 24s, before/after comparison](docs/media/real_mode_demo.gif)
+
+<sub>Real Devin run, waiting parts sped up. Full video: [`docs/media/real_mode_demo.mp4`](docs/media/real_mode_demo.mp4) (resulting PR: #14, intentionally unmerged). Slides: [`docs/media/video2pr_slides.pptx`](docs/media/video2pr_slides.pptx) / [PDF](docs/media/video2pr_slides.pdf).</sub>
+
+### Backup mode
+
 ![video2pr backup-mode walkthrough: upload a bug video, get a bug report, a PR, and a before/after comparison](docs/media/walkthrough.gif)
 
 <sub>Backup (mock) mode, sped up 2x. Full-speed recording: [`docs/media/backup_mode_walkthrough.mp4`](docs/media/backup_mode_walkthrough.mp4). Final screen: [`docs/media/walkthrough_result.png`](docs/media/walkthrough_result.png).</sub>
