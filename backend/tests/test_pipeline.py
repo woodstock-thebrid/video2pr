@@ -1,3 +1,4 @@
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -6,10 +7,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.devin import create_session, get_session
+from backend.devin import build_vision_prompt, create_session, get_session, upload_attachment
 from backend.main import app
 from backend.jobs import JOBS
-from backend.report import BugReport, parse_report_json
+from backend.report import BugReport, parse_report_json, select_vision_provider
 from backend.video import extract_frames
 
 
@@ -60,6 +61,7 @@ def test_mock_pipeline_returns_pr(monkeypatch: pytest.MonkeyPatch, sample_video:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+    monkeypatch.delenv("VISION_PROVIDER", raising=False)
     monkeypatch.setenv("MOCK_DEVIN", "1")
     monkeypatch.setenv("MOCK_DEVIN_SECONDS", "0.1")
     monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.05")
@@ -89,6 +91,7 @@ def test_mock_pipeline_returns_pr(monkeypatch: pytest.MonkeyPatch, sample_video:
         assert job["devin_state"] == "finished"
         assert job["devin_messages"]
         assert job["error"] is None
+        assert job["vision_provider"] == "mock"
         assert any(client.get(path).status_code == 200 for path in job["frame_urls"])
 
 
@@ -114,6 +117,7 @@ def test_v1_normalizes_working_session(monkeypatch: pytest.MonkeyPatch) -> None:
             {"message": "Investigating", "source": "agent", "timestamp": "2025-01-01T00:00:00Z"}
         ],
         "raw_status": "working",
+        "structured_output": None,
     }
 
 
@@ -191,6 +195,7 @@ def test_v3_normalizes_waiting_for_user(monkeypatch: pytest.MonkeyPatch) -> None
         "pr_url": None,
         "messages": [{"message": "Please approve access", "source": "devin", "timestamp": 1735689600}],
         "raw_status": "running:waiting_for_approval",
+        "structured_output": None,
     }
     assert calls[1].endswith("/sessions/session-v3/messages?first=100")
 
@@ -221,6 +226,7 @@ def test_v3_normalizes_running_and_pull_request(monkeypatch: pytest.MonkeyPatch)
         "pr_url": "https://github.com/example/repo/pull/18",
         "messages": [],
         "raw_status": "running:working",
+        "structured_output": None,
     }
 
 
@@ -259,3 +265,183 @@ def test_http_errors_include_path_status_and_body(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(RuntimeError, match=r"GET /v1/sessions/session-v1 -> 403: permission denied"):
         get_session("session-v1")
+
+
+def test_vision_provider_defaults_and_explicit_mock_rehearsal(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "VISION_PROVIDER",
+        "DEVIN_API_KEY",
+        "MOCK_DEVIN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert select_vision_provider() == "mock"
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test")
+    assert select_vision_provider() == "anthropic"
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test")
+    assert select_vision_provider() == "openai"
+    monkeypatch.setenv("DEVIN_API_KEY", "apk_test")
+    assert select_vision_provider() == "devin"
+    monkeypatch.setenv("MOCK_DEVIN", "1")
+    assert select_vision_provider() == "openai"
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert select_vision_provider() == "mock"
+
+    monkeypatch.setenv("VISION_PROVIDER", "devin")
+    assert select_vision_provider() == "devin"
+
+
+def test_v1_upload_attachment_strips_response_quotes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "apk_legacy")
+    monkeypatch.delenv("MOCK_DEVIN", raising=False)
+    path = tmp_path / "frame.jpg"
+    path.write_bytes(b"frame")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, text='"https://devin.ai/attachments/frame.jpg"')
+
+    monkeypatch.setattr("backend.devin.httpx.post", fake_post)
+
+    assert upload_attachment(path) == "https://devin.ai/attachments/frame.jpg"
+    assert calls[0][0] == "https://api.devin.ai/v1/attachments"
+    file_info = calls[0][1]["files"]["file"]
+    assert file_info[0] == "frame.jpg"
+    assert file_info[2] == "image/jpeg"
+
+
+def test_v3_upload_attachment_reads_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "cog_test")
+    monkeypatch.setenv("DEVIN_ORG_ID", "org-test")
+    monkeypatch.delenv("MOCK_DEVIN", raising=False)
+    path = tmp_path / "frame.jpg"
+    path.write_bytes(b"frame")
+    calls: list[str] = []
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        calls.append(url)
+        return httpx.Response(200, json={"url": "https://devin.ai/attachments/frame.jpg"})
+
+    monkeypatch.setattr("backend.devin.httpx.post", fake_post)
+
+    assert upload_attachment(path) == "https://devin.ai/attachments/frame.jpg"
+    assert calls == ["https://api.devin.ai/v3/organizations/org-test/attachments"]
+
+
+def test_v1_create_sends_schema_and_attachment_prompt_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "apk_test")
+    monkeypatch.delenv("MOCK_DEVIN", raising=False)
+    attachment_urls = ["https://devin.ai/frame-1.jpg", "https://devin.ai/frame-2.jpg"]
+    schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+    prompt = build_vision_prompt("The subtotal is wrong.", attachment_urls)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, json={"session_id": "session-v1", "url": "https://app.devin.ai/session-v1"})
+
+    monkeypatch.setattr("backend.devin.httpx.post", fake_post)
+    create_session(prompt, "Vision report", schema, attachment_urls)
+
+    body = calls[0][1]["json"]
+    prompt_lines = body["prompt"].splitlines()
+    assert body["structured_output_schema"] == schema
+    assert 'ATTACHMENT:"https://devin.ai/frame-1.jpg"' in prompt_lines
+    assert 'ATTACHMENT:"https://devin.ai/frame-2.jpg"' in prompt_lines
+    assert "attachment_urls" not in body
+    assert "The subtotal is wrong." in body["prompt"]
+
+
+def test_v3_create_sends_schema_and_attachment_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "cog_test")
+    monkeypatch.setenv("DEVIN_ORG_ID", "org-test")
+    monkeypatch.delenv("MOCK_DEVIN", raising=False)
+    attachment_urls = ["https://devin.ai/frame-1.jpg"]
+    schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, json={"session_id": "session-v3", "url": "https://app.devin.ai/session-v3"})
+
+    monkeypatch.setattr("backend.devin.httpx.post", fake_post)
+    create_session("Report from the video", "Ignored by v3", schema, attachment_urls)
+
+    body = calls[0][1]["json"]
+    assert body["structured_output_schema"] == schema
+    assert body["attachment_urls"] == attachment_urls
+    assert 'ATTACHMENT:"https://devin.ai/frame-1.jpg"' in body["prompt"].splitlines()
+    assert "title" not in body
+
+
+@pytest.mark.parametrize(
+    ("structured_output", "expected"),
+    [
+        ({"title": "Concrete report"}, {"title": "Concrete report"}),
+        ('{"title":"Concrete report"}', {"title": "Concrete report"}),
+        ("not valid JSON", None),
+        (["not", "an", "object"], None),
+    ],
+)
+def test_v1_normalizes_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+    structured_output: object,
+    expected: dict[str, object] | None,
+) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "apk_legacy")
+    monkeypatch.delenv("MOCK_DEVIN", raising=False)
+    response = httpx.Response(
+        200,
+        json={"status_enum": "working", "structured_output": structured_output, "messages": []},
+    )
+    monkeypatch.setattr("backend.devin.httpx.get", lambda url, **kwargs: response)
+
+    assert get_session("session-v1")["structured_output"] == expected
+
+
+def test_devin_vision_mock_pipeline_uses_structured_report(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_video: Path,
+) -> None:
+    monkeypatch.setenv("VISION_PROVIDER", "devin")
+    monkeypatch.setenv("MOCK_DEVIN", "1")
+    monkeypatch.setenv("MOCK_DEVIN_SECONDS", "0.5")
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.05")
+    monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    JOBS.clear()
+
+    with TestClient(app) as client:
+        with sample_video.open("rb") as video:
+            response = client.post(
+                "/api/reports",
+                files={"video": ("recording.mp4", video, "video/mp4")},
+                data={"note": "Two burgers should total $25.00."},
+            )
+        assert response.status_code == 200
+        job_id = response.json()["job_id"]
+
+        deadline = time.monotonic() + 10
+        job = client.get(f"/api/reports/{job_id}").json()
+        while job["stage"] not in {"pr_opened", "finished", "failed"} and time.monotonic() < deadline:
+            time.sleep(0.05)
+            job = client.get(f"/api/reports/{job_id}").json()
+
+    assert job["stage"] == "pr_opened", job
+    assert list(job["timestamps"]) == [
+        "extracting",
+        "analyzing",
+        "dispatching",
+        "devin_working",
+        "pr_opened",
+    ]
+    assert job["report"]["title"] == "Tech Tower Burger quantity is omitted from the subtotal"
+    assert "$12.50" in job["report"]["actual"]
+    assert "$25.00" in job["report"]["expected"]
+    assert job["vision_provider"] == "devin"
+    assert job["pr_url"]
