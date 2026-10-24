@@ -1,1 +1,37 @@
 # video2pr
+
+Turn a phone screen recording of a web-app bug into a structured report and a Devin session that reproduces and fixes it.
+
+## Architecture
+
+```text
+Phone/browser video
+        │
+        ▼
+FastAPI upload ──► ffprobe + ffmpeg frame extraction
+        │
+        ▼
+Vision report (OpenAI / Anthropic / local mock)
+        │
+        ▼
+Devin API session (or simulated session)
+        │
+        ├──► Static frontend: progress, frames, report, messages, PR
+        └──► /demo/: GT Dining ordering app for the repro walkthrough
+```
+
+## Run locally
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn backend.main:app --reload --port 8000
+```
+
+The frontend is available at <http://localhost:8000>, and the sample GT Dining app is at <http://localhost:8000/demo/>.
+
+Without provider keys, video reports use a mock report and Devin sessions run in simulation mode. Add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for vision analysis. Add `DEVIN_API_KEY` to create real Devin sessions: `cog_` personal access tokens use Devin API v3, while legacy tokens use v1. `DEVIN_ORG_ID` selects the v3 organization, and `MOCK_DEVIN=1` forces simulation. The simulated session takes about 40 seconds by default; set `MOCK_DEVIN_SECONDS` to change that duration.
+
+`run.sh` starts the same development server.
