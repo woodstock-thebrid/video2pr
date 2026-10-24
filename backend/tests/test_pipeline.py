@@ -9,9 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.devin import build_session_schema, build_vision_prompt, create_session, get_session, upload_attachment
-from backend.main import app
-from backend.jobs import JOBS, _poll_session, extract_before_after
-from backend.report import BugReport, parse_report_json, select_vision_provider
+from backend.main import _COMPARISON_IMAGE_CACHE, app
+from backend.jobs import JOBS, _poll_session, create_job, extract_before_after
+from backend.mock_bugs import mock_bug_for_upload
+from backend.report import BugReport, generate_report, parse_report_json, select_vision_provider
 from backend.video import extract_frames
 
 
@@ -626,3 +627,139 @@ def test_batch_rejects_zero_files() -> None:
         response = client.post("/api/reports/batch")
 
     assert response.status_code in {400, 422}
+
+
+def test_comparison_attachment_proxy_authenticates_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEVIN_API_KEY", "cog-test-token")
+    monkeypatch.setenv("VISION_PROVIDER", "mock")
+    JOBS.clear()
+    _COMPARISON_IMAGE_CACHE.clear()
+    job_id, _ = create_job("proxy-test.mp4")
+    JOBS[job_id]["comparison"] = {
+        "before_url": "https://app.devin.ai/attachments/before-id/before.png",
+        "after_url": "https://app.devin.ai/attachments/after-id/after.png",
+        "root_cause": None,
+        "code_diff": None,
+    }
+    JOBS[job_id]["comparison_status"] = "ready"
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, content=b"png-bytes", headers={"content-type": "image/png"})
+
+    monkeypatch.setattr("backend.main.httpx.get", fake_get)
+    with TestClient(app) as client:
+        job = client.get(f"/api/reports/{job_id}").json()
+        assert job["comparison"]["before_url"].endswith("/before.png")
+        assert job["comparison"]["before_src"] == f"/api/reports/{job_id}/comparison/before"
+        assert job["comparison"]["after_src"] == f"/api/reports/{job_id}/comparison/after"
+        before = client.get(job["comparison"]["before_src"])
+        cached_before = client.get(job["comparison"]["before_src"])
+        after = client.get(job["comparison"]["after_src"])
+
+    assert before.content == b"png-bytes"
+    assert before.headers["content-type"] == "image/png"
+    assert before.headers["cache-control"] == "max-age=3600"
+    assert cached_before.content == b"png-bytes"
+    assert after.content == b"png-bytes"
+    assert [call[0] for call in calls] == [
+        "https://api.devin.ai/v1/attachments/before-id/before.png",
+        "https://api.devin.ai/v1/attachments/after-id/after.png",
+    ]
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer cog-test-token"
+    JOBS.pop(job_id, None)
+    _COMPARISON_IMAGE_CACHE.clear()
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://app.devin.ai/api/presigned_proxy?token=example",
+        "/mock/search-before.png",
+    ],
+)
+def test_comparison_proxy_redirects_other_urls(source_url: str) -> None:
+    JOBS.clear()
+    job_id, _ = create_job("redirect-test.mp4")
+    JOBS[job_id]["comparison"] = {
+        "before_url": source_url,
+        "after_url": "/mock/search-after.png",
+        "root_cause": None,
+        "code_diff": None,
+    }
+    JOBS[job_id]["comparison_status"] = "ready"
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/reports/{job_id}/comparison/before",
+            follow_redirects=False,
+        )
+    assert response.status_code == 307
+    assert response.headers["location"] == source_url
+    JOBS.pop(job_id, None)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "which", "has_comparison"),
+    [("missing-job", "before", True), ("missing-comparison", "before", False), ("bad-which", "side", True)],
+)
+def test_comparison_proxy_returns_404_for_missing_resources(
+    job_id: str,
+    which: str,
+    has_comparison: bool,
+) -> None:
+    JOBS.clear()
+    if job_id != "missing-job":
+        job_id, _ = create_job(job_id)
+        if has_comparison:
+            JOBS[job_id]["comparison"] = {
+                "before_url": "/mock/before.png",
+                "after_url": "/mock/after.png",
+            }
+            JOBS[job_id]["comparison_status"] = "ready"
+    with TestClient(app) as client:
+        response = client.get(f"/api/reports/{job_id}/comparison/{which}")
+    assert response.status_code == 404
+    JOBS.pop(job_id, None)
+
+
+@pytest.mark.parametrize(
+    ("filename", "title"),
+    [
+        ("bug1_quantity.mp4", "Tech Tower Burger quantity is omitted from the subtotal"),
+        ("bug3_search.mp4", "Multi-word menu searches hide matching items"),
+        ("bug4_double_order.mp4", "Rapid double-click on Checkout places two orders"),
+        ("bug2_checkout_mobile.mp4", "Fixed mobile banner covers the Checkout button below 420px"),
+    ],
+)
+def test_mock_reports_match_upload_filenames(
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    title: str,
+) -> None:
+    monkeypatch.setenv("VISION_PROVIDER", "mock")
+    for name in ("DEVIN_API_KEY", "MOCK_DEVIN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    report = generate_report([], upload_name=filename)
+    assert report.title == title
+    assert mock_bug_for_upload(filename)["report"]["title"] == title
+
+
+def test_mock_vision_session_keeps_filename_for_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MOCK_DEVIN", "1")
+    monkeypatch.setenv("MOCK_DEVIN_SECONDS", "0.05")
+    monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+    session = create_session(
+        "prompt",
+        "search",
+        build_session_schema(),
+        upload_name="bug3_search.mp4",
+    )
+    time.sleep(0.15)
+    structured = get_session(session["session_id"])["structured_output"]
+    assert structured["title"] == "Multi-word menu searches hide matching items"
+    assert structured["before_screenshot_url"] == "/mock/search-before.png"

@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import httpx
 
+from backend.mock_bugs import mock_bug_for_upload
 from backend.report import BugReport
 
 API_BASE = "https://api.devin.ai"
@@ -36,20 +37,6 @@ _MOCK_MILESTONES = [
     "Found the relevant UI code; preparing a focused fix.",
     "Verifying the change and opening a pull request.",
 ]
-_MOCK_VISION_REPORT = {
-    "title": "Tech Tower Burger quantity is omitted from the subtotal",
-    "page": "GT Dining order page",
-    "steps": [
-        "Open GT Dining and add one Tech Tower Burger.",
-        "Click the plus control once so the cart quantity is 2.",
-    ],
-    "expected": "The subtotal should be $25.00 for two Tech Tower Burgers at $12.50 each.",
-    "actual": "The cart shows quantity 2, but the subtotal is $12.50.",
-    "suspected_area": "The burger subtotal calculation in demo-app/app.js does not multiply by quantity.",
-    "severity": "medium",
-}
-
-
 def build_prompt(report: dict[str, object]) -> str:
     target_repo = os.getenv("TARGET_REPO", "woodstock-thebrid/video2pr")
     steps = "\n".join(f"{index}. {step}" for index, step in enumerate(report["steps"], start=1))
@@ -176,6 +163,8 @@ def create_session(
     title: str,
     structured_output_schema: dict[str, object] | None = None,
     attachment_urls: list[str] | None = None,
+    *,
+    upload_name: str | None = None,
 ) -> dict[str, str]:
     if _mock_enabled():
         session_id = f"mock-{uuid.uuid4().hex[:12]}"
@@ -183,6 +172,7 @@ def create_session(
             "created_at": time.monotonic(),
             "title": title,
             "structured_output_enabled": structured_output_schema is not None,
+            "upload_name": upload_name,
         }
         return {"session_id": session_id, "url": f"https://app.devin.ai/sessions/{session_id}"}
 
@@ -300,6 +290,9 @@ def _v3_session(session_id: str) -> dict[str, object]:
 def get_session(session_id: str) -> dict[str, object]:
     if session_id.startswith("mock-"):
         session = _mock_sessions[session_id]
+        bug = mock_bug_for_upload(
+            session.get("upload_name") if isinstance(session.get("upload_name"), str) else None
+        )
         elapsed = time.monotonic() - float(session["created_at"])
         duration = max(float(os.getenv("MOCK_DEVIN_SECONDS", "40")), 0.1)
         progress = min(elapsed / duration, 1)
@@ -308,19 +301,13 @@ def get_session(session_id: str) -> dict[str, object]:
         finished = progress >= 1
         structured_output = (
             {
-                **_MOCK_VISION_REPORT,
+                **bug["report"],
                 **(
                     {
-                        "before_screenshot_url": "/mock/before.png",
-                        "after_screenshot_url": "/mock/after.png",
-                        "root_cause": (
-                            "The burger subtotal calculation omitted the quantity when computing "
-                            "the line total."
-                        ),
-                        "code_diff": (
-                            '-    return sum + item.price * (id === "burger" ? 1 : quantity);\n'
-                            '+    return sum + item.price * quantity;'
-                        ),
+                        "before_screenshot_url": bug["before_url"],
+                        "after_screenshot_url": bug["after_url"],
+                        "root_cause": bug["root_cause"],
+                        "code_diff": bug["code_diff"],
                     }
                     if finished
                     else {}
