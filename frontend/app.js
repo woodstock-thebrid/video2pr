@@ -22,10 +22,70 @@ let lightboxItems = [];
 let lightboxIndex = 0;
 let lightboxReturnFocus = null;
 let lightboxJobId = null;
+let renderedJob = null;
+let copyFeedbackJobId = null;
+let copyFeedbackLabel = "Copied";
+let copyFeedbackUntil = 0;
+let copyFeedbackTimeout = null;
 
 const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[character]));
+
+function reportMarkdown(job) {
+  const report = job.report || {};
+  const lines = [
+    "## Bug report (written by Devin from a screen recording)",
+    "",
+    `**Page:** ${report.page || ""}`,
+    `**Severity:** ${report.severity || ""}`,
+    "",
+    "**Steps:**",
+    ...(report.steps || []).map((step, index) => `${index + 1}. ${step}`),
+    "",
+    `**Expected:** ${report.expected || ""}`,
+    `**Actual:** ${report.actual || ""}`,
+    `**Suspected area:** ${report.suspected_area || ""}`
+  ];
+  if (job.devin_session_url) lines.push("", `Devin session: ${job.devin_session_url}`);
+  if (job.pr_url) lines.push("", `Fix PR: ${job.pr_url}`);
+  return lines.join("\n");
+}
+
+function githubIssueUrl(job) {
+  let owner = "woodstock-thebrid";
+  let repository = "video2pr";
+  if (job.pr_url) {
+    try {
+      const parsed = new URL(job.pr_url);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      if (parsed.hostname === "github.com" && parts.length >= 4 && parts[2] === "pull" && /^\d+$/.test(parts[3])) {
+        owner = parts[0];
+        repository = parts[1].replace(/\.git$/i, "");
+      }
+    } catch {}
+  }
+  const url = new URL(`https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/issues/new`);
+  url.searchParams.set("title", job.report?.title || "Bug report");
+  url.searchParams.set("body", reportMarkdown(job));
+  return url.toString();
+}
+
+function setCopyFeedback(jobId, label) {
+  copyFeedbackJobId = jobId;
+  copyFeedbackLabel = label;
+  copyFeedbackUntil = Date.now() + 2000;
+  if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout);
+  const button = document.querySelector("#job-content [data-copy-report]");
+  if (button && renderedJob?.job_id === jobId) button.textContent = label;
+  copyFeedbackTimeout = setTimeout(() => {
+    if (copyFeedbackJobId !== jobId) return;
+    copyFeedbackJobId = null;
+    copyFeedbackUntil = 0;
+    const currentButton = document.querySelector("#job-content [data-copy-report]");
+    if (currentButton && renderedJob?.job_id === jobId) currentButton.textContent = "Copy as Markdown";
+  }, 2000);
+}
 
 function shouldStopPolling(job) {
   return terminalStages.has(job?.stage)
@@ -268,6 +328,7 @@ function formatStage(stage, job) {
 
 function renderJob(job) {
   if (lightboxJobId && lightboxJobId !== job.job_id) closeLightbox();
+  renderedJob = job;
   selectedJobId = job.job_id;
   document.querySelector("#empty-progress").hidden = true;
   document.querySelector("#job-view").hidden = false;
@@ -286,7 +347,10 @@ function renderJob(job) {
     const authorBadge = job.vision_provider === "devin"
       ? '<span class="report-author">Written by Devin</span>'
       : "";
-    reportMarkup = `<article class="report-card"><div class="report-top"><span class="report-label">BUG REPORT</span>${authorBadge}<span class="severity severity-${escapeHtml(report.severity)}">${escapeHtml(report.severity)}</span></div><h3>${escapeHtml(report.title)}</h3><p class="report-page">${escapeHtml(report.page)}</p><div class="report-facts"><div><span>EXPECTED</span><p>${escapeHtml(report.expected)}</p></div><div><span>ACTUAL</span><p>${escapeHtml(report.actual)}</p></div></div><div class="report-steps"><strong>REPRODUCTION</strong><ol>${(report.steps || []).map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></div><p class="suspected"><strong>Suspected area</strong> ${escapeHtml(report.suspected_area)}</p></article>`;
+    const copyLabel = copyFeedbackJobId === job.job_id && Date.now() < copyFeedbackUntil
+      ? copyFeedbackLabel
+      : "Copy as Markdown";
+    reportMarkup = `<article class="report-card"><div class="report-top"><span class="report-label">BUG REPORT</span>${authorBadge}<span class="severity severity-${escapeHtml(report.severity)}">${escapeHtml(report.severity)}</span></div><h3>${escapeHtml(report.title)}</h3><p class="report-page">${escapeHtml(report.page)}</p><div class="report-facts"><div><span>EXPECTED</span><p>${escapeHtml(report.expected)}</p></div><div><span>ACTUAL</span><p>${escapeHtml(report.actual)}</p></div></div><div class="report-steps"><strong>REPRODUCTION</strong><ol>${(report.steps || []).map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></div><p class="suspected"><strong>Suspected area</strong> ${escapeHtml(report.suspected_area)}</p><div class="report-actions"><button type="button" class="report-action" data-copy-report>${copyLabel}</button><button type="button" class="report-action" data-open-issue>Open as GitHub issue</button></div></article>`;
   }
   const messagesMarkup = job.devin_messages?.length
     ? `<div class="result-block messages-block"><div class="block-title"><span>DEVIN ACTIVITY</span><span>${job.devin_messages.length} updates</span></div><div class="message-feed">${job.devin_messages.slice(-8).map(message => `<div class="message"><span class="message-dot"></span><p>${escapeHtml(message.message)}</p></div>`).join("")}</div></div>`
@@ -563,7 +627,22 @@ document.querySelector("#batch-view").addEventListener("keydown", event => {
     showBatchJob(card.dataset.batchJob);
   }
 });
-document.querySelector("#job-content").addEventListener("click", event => {
+document.querySelector("#job-content").addEventListener("click", async event => {
+  const copyButton = event.target.closest("[data-copy-report]");
+  if (copyButton && renderedJob?.report) {
+    try {
+      await navigator.clipboard.writeText(reportMarkdown(renderedJob));
+      setCopyFeedback(renderedJob.job_id, "Copied");
+    } catch {
+      setCopyFeedback(renderedJob.job_id, "Copy unavailable");
+    }
+    return;
+  }
+  const issueButton = event.target.closest("[data-open-issue]");
+  if (issueButton && renderedJob?.report) {
+    window.open(githubIssueUrl(renderedJob), "_blank", "noopener,noreferrer");
+    return;
+  }
   const lightboxTrigger = event.target.closest(".comparison-lightbox-trigger");
   if (lightboxTrigger) {
     openLightbox(lightboxTrigger);
