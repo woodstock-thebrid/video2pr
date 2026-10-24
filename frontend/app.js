@@ -24,8 +24,8 @@ function renderCodeDiff(diff) {
     const escaped = escapeHtml(line);
     if (line.startsWith("+") && !line.startsWith("+++")) return `<span class="diff-add">${escaped}</span>`;
     if (line.startsWith("-") && !line.startsWith("---")) return `<span class="diff-remove">${escaped}</span>`;
-    return escaped;
-  }).join("\n");
+    return `<span>${escaped}</span>`;
+  }).join("");
 }
 
 function renderComparison(job) {
