@@ -9,12 +9,19 @@ const terminalStages = new Set(["finished", "failed"]);
 let selectedFiles = [];
 let selectedJobId = null;
 let pollTimer = null;
+let elapsedTimer = null;
+let elapsedTimerJobId = null;
 let batchPollTimer = null;
 let batchRefreshInFlight = false;
 let batchJobIds = [];
 let batchJobs = new Map();
 let currentView = "job";
 let detailFromBoard = false;
+let lightboxElement = null;
+let lightboxItems = [];
+let lightboxIndex = 0;
+let lightboxReturnFocus = null;
+let lightboxJobId = null;
 
 const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -32,6 +39,65 @@ function renderCodeDiff(diff) {
     if (line.startsWith("-") && !line.startsWith("---")) return `<span class="diff-remove">${escaped}</span>`;
     return `<span>${escaped}</span>`;
   }).join("");
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+}
+
+function timestampMilliseconds(job, stage) {
+  const timestamp = Date.parse(job?.timestamps?.[stage] || "");
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function jobPrDuration(job) {
+  const startedAt = timestampMilliseconds(job, "extracting");
+  const pullRequestAt = timestampMilliseconds(job, "pr_opened");
+  return startedAt === null || pullRequestAt === null
+    ? null
+    : formatDuration(pullRequestAt - startedAt);
+}
+
+function renderJobTimer(job) {
+  const duration = jobPrDuration(job);
+  if (duration !== null) {
+    return `<div class="video-pr-timer video-pr-timer-complete">Video → PR <strong>in ${duration}</strong></div>`;
+  }
+  const startedAt = timestampMilliseconds(job, "extracting");
+  if (startedAt === null || job.stage === "failed" || job.devin_state === "failed") return "";
+  return `<div class="video-pr-timer video-pr-timer-live" id="video-pr-timer" aria-live="off">Elapsed ${formatDuration(Date.now() - startedAt)}</div>`;
+}
+
+function clearElapsedTimer() {
+  if (elapsedTimer) clearInterval(elapsedTimer);
+  elapsedTimer = null;
+  elapsedTimerJobId = null;
+}
+
+function syncElapsedTimer(job) {
+  const timerElement = document.querySelector("#video-pr-timer");
+  if (!timerElement) {
+    clearElapsedTimer();
+    return;
+  }
+  if (elapsedTimer && elapsedTimerJobId === job.job_id) return;
+  clearElapsedTimer();
+  const startedAt = timestampMilliseconds(job, "extracting");
+  if (startedAt === null) return;
+  elapsedTimerJobId = job.job_id;
+  elapsedTimer = setInterval(() => {
+    if (selectedJobId !== job.job_id || currentView === "batchBoard") {
+      clearElapsedTimer();
+      return;
+    }
+    const currentTimer = document.querySelector("#video-pr-timer");
+    if (!currentTimer) {
+      clearElapsedTimer();
+      return;
+    }
+    currentTimer.textContent = `Elapsed ${formatDuration(Date.now() - startedAt)}`;
+  }, 1000);
 }
 
 function renderComparison(job) {
@@ -65,12 +131,93 @@ function renderComparison(job) {
   return `<section class="comparison-card">
     <div class="block-title"><span>BEFORE / AFTER</span><span>VERIFIED</span></div>
     <div class="comparison-images">
-      <div class="comparison-image"><span>BEFORE</span><a href="${escapeHtml(beforeSrc)}" target="_blank" rel="noopener noreferrer" aria-label="Open before screenshot full size"><img src="${escapeHtml(beforeSrc)}" alt="before"></a></div>
-      <div class="comparison-image"><span>AFTER</span><a href="${escapeHtml(afterSrc)}" target="_blank" rel="noopener noreferrer" aria-label="Open after screenshot full size"><img src="${escapeHtml(afterSrc)}" alt="after"></a></div>
+      <div class="comparison-image"><span>BEFORE</span><button class="comparison-lightbox-trigger" type="button" data-lightbox-index="0" data-lightbox-src="${escapeHtml(beforeSrc)}" data-lightbox-label="BEFORE" aria-label="View before screenshot full size"><img src="${escapeHtml(beforeSrc)}" alt="Before screenshot"></button></div>
+      <div class="comparison-image"><span>AFTER</span><button class="comparison-lightbox-trigger" type="button" data-lightbox-index="1" data-lightbox-src="${escapeHtml(afterSrc)}" data-lightbox-label="AFTER" aria-label="View after screenshot full size"><img src="${escapeHtml(afterSrc)}" alt="After screenshot"></button></div>
     </div>
     ${rootCauseMarkup}${codeDiffMarkup}
   </section>`;
 }
+
+function ensureLightbox() {
+  if (lightboxElement) return lightboxElement;
+  lightboxElement = document.createElement("div");
+  lightboxElement.className = "comparison-lightbox";
+  lightboxElement.hidden = true;
+  lightboxElement.innerHTML = `
+    <div class="comparison-lightbox-backdrop"></div>
+    <div class="comparison-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Before and after screenshots">
+      <div class="comparison-lightbox-header">
+        <span class="comparison-lightbox-label"></span>
+        <button class="comparison-lightbox-close" type="button" aria-label="Close image viewer">Close <span aria-hidden="true">×</span></button>
+      </div>
+      <div class="comparison-lightbox-stage">
+        <button class="comparison-lightbox-nav" type="button" data-lightbox-previous aria-label="Show previous screenshot">‹</button>
+        <img class="comparison-lightbox-image" alt="">
+        <button class="comparison-lightbox-nav" type="button" data-lightbox-next aria-label="Show next screenshot">›</button>
+      </div>
+    </div>`;
+  lightboxElement.addEventListener("click", event => {
+    if (event.target === lightboxElement || event.target.classList.contains("comparison-lightbox-backdrop")) {
+      closeLightbox();
+    }
+  });
+  lightboxElement.querySelector(".comparison-lightbox-close").addEventListener("click", closeLightbox);
+  lightboxElement.querySelector("[data-lightbox-previous]").addEventListener("click", () => showLightboxImage(lightboxIndex - 1));
+  lightboxElement.querySelector("[data-lightbox-next]").addEventListener("click", () => showLightboxImage(lightboxIndex + 1));
+  document.body.append(lightboxElement);
+  return lightboxElement;
+}
+
+function showLightboxImage(index) {
+  if (!lightboxItems.length) return;
+  lightboxIndex = (index + lightboxItems.length) % lightboxItems.length;
+  const item = lightboxItems[lightboxIndex];
+  const image = lightboxElement.querySelector(".comparison-lightbox-image");
+  image.src = item.src;
+  image.alt = `${item.label.toLowerCase()} screenshot`;
+  lightboxElement.querySelector(".comparison-lightbox-label").textContent = item.label;
+}
+
+function openLightbox(trigger) {
+  lightboxItems = [...document.querySelectorAll("#job-content .comparison-lightbox-trigger")].map(button => ({
+    src: button.dataset.lightboxSrc,
+    label: button.dataset.lightboxLabel
+  }));
+  const index = Number(trigger.dataset.lightboxIndex);
+  if (!lightboxItems.length || !lightboxItems[index]) return;
+  const lightbox = ensureLightbox();
+  lightboxIndex = index;
+  lightboxReturnFocus = trigger;
+  lightboxJobId = selectedJobId;
+  showLightboxImage(index);
+  lightbox.hidden = false;
+  document.body.classList.add("lightbox-open");
+  lightbox.querySelector(".comparison-lightbox-close").focus();
+}
+
+function closeLightbox() {
+  if (!lightboxElement || lightboxElement.hidden) return;
+  lightboxElement.hidden = true;
+  document.body.classList.remove("lightbox-open");
+  const returnFocus = lightboxReturnFocus;
+  lightboxReturnFocus = null;
+  lightboxJobId = null;
+  if (returnFocus?.isConnected) returnFocus.focus();
+}
+
+document.addEventListener("keydown", event => {
+  if (!lightboxElement || lightboxElement.hidden) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeLightbox();
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    showLightboxImage(lightboxIndex - 1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    showLightboxImage(lightboxIndex + 1);
+  }
+});
 
 function setSelectedFiles(fileList) {
   const files = [...fileList];
@@ -120,6 +267,7 @@ function formatStage(stage, job) {
 }
 
 function renderJob(job) {
+  if (lightboxJobId && lightboxJobId !== job.job_id) closeLightbox();
   selectedJobId = job.job_id;
   document.querySelector("#empty-progress").hidden = true;
   document.querySelector("#job-view").hidden = false;
@@ -157,10 +305,13 @@ function renderJob(job) {
   const backMarkup = detailFromBoard
     ? '<button class="back-to-board" id="back-to-board" type="button">← Back to board</button>'
     : "";
+  const timerMarkup = renderJobTimer(job);
   document.querySelector("#job-content").innerHTML = `
     ${backMarkup}
     <div class="job-status"><span class="status-orbit ${shouldStopPolling(job) ? "settled" : ""}"></span>${statusMarkup}<small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
-    ${frameMarkup}${reportMarkup}${renderComparison(job)}${messagesMarkup}${prMarkup}${errorMarkup}`;
+    ${timerMarkup}${frameMarkup}${reportMarkup}${renderComparison(job)}${messagesMarkup}${prMarkup}${errorMarkup}`;
+  if (timerMarkup.includes('id="video-pr-timer"')) syncElapsedTimer(job);
+  else clearElapsedTimer();
   renderRecent();
 }
 
@@ -193,6 +344,10 @@ function renderBatchBoard() {
     const reportMarkup = job.report
       ? `<div class="parallel-card-report"><strong>${escapeHtml(job.report.title)}</strong>${job.vision_provider === "devin" ? '<span class="report-author">Written by Devin</span>' : ""}</div>`
       : '<p class="parallel-card-pending">Bug report in progress</p>';
+    const prDuration = job.pr_url ? jobPrDuration(job) : null;
+    const prTimeMarkup = prDuration !== null
+      ? `<span class="parallel-pr-time">PR in ${prDuration}</span>`
+      : "";
     const sessionLink = job.devin_session_url
       ? `<a href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noopener noreferrer">Devin session ↗</a>`
       : "";
@@ -208,6 +363,7 @@ function renderBatchBoard() {
     return `<article class="parallel-job-card" data-batch-job="${escapeHtml(job.job_id)}" tabindex="0" role="button" aria-label="Open ${escapeHtml(job.upload_name || "video")} details">
       <div class="parallel-card-heading"><strong>${escapeHtml(job.upload_name || "Video")}</strong><span>${escapeHtml(formatStage(job.stage, job))}</span></div>
       ${renderBatchStageDots(job)}
+      ${prTimeMarkup}
       ${reportMarkup}
       <div class="parallel-card-links">${sessionLink}${prLink}</div>
       ${thumbnails}
@@ -237,6 +393,8 @@ function showBatchJob(jobId) {
 }
 
 function showBatchBoard() {
+  clearElapsedTimer();
+  closeLightbox();
   currentView = "batchBoard";
   detailFromBoard = false;
   selectedJobId = null;
@@ -334,6 +492,8 @@ dropZone.addEventListener("drop", event => {
 
 document.querySelector("#submit-button").addEventListener("click", async () => {
   if (!selectedFiles.length) return;
+  clearElapsedTimer();
+  closeLightbox();
   const button = document.querySelector("#submit-button");
   button.disabled = true;
   button.querySelector("span").textContent = selectedFiles.length > 1
@@ -404,12 +564,19 @@ document.querySelector("#batch-view").addEventListener("keydown", event => {
   }
 });
 document.querySelector("#job-content").addEventListener("click", event => {
+  const lightboxTrigger = event.target.closest(".comparison-lightbox-trigger");
+  if (lightboxTrigger) {
+    openLightbox(lightboxTrigger);
+    return;
+  }
   if (event.target.closest("#back-to-board")) showBatchBoard();
 });
 
 document.querySelector("#recent-jobs").addEventListener("click", async event => {
   const button = event.target.closest("[data-job]");
   if (!button) return;
+  clearElapsedTimer();
+  closeLightbox();
   currentView = "job";
   detailFromBoard = false;
   selectedJobId = button.dataset.job;
