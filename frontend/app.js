@@ -5,7 +5,7 @@ const stages = [
   { key: "devin_working", label: "Devin fixing" },
   { key: "pr_opened", label: "PR" }
 ];
-const terminalStages = new Set(["pr_opened", "finished", "failed"]);
+const terminalStages = new Set(["finished", "failed"]);
 let selectedFile = null;
 let selectedJobId = null;
 let pollTimer = null;
@@ -13,6 +13,56 @@ let pollTimer = null;
 const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[character]));
+
+function shouldStopPolling(job) {
+  return terminalStages.has(job?.stage)
+    || (job?.stage === "pr_opened" && job?.comparison_status !== "waiting");
+}
+
+function renderCodeDiff(diff) {
+  return String(diff ?? "").split("\n").map(line => {
+    const escaped = escapeHtml(line);
+    if (line.startsWith("+") && !line.startsWith("+++")) return `<span class="diff-add">${escaped}</span>`;
+    if (line.startsWith("-") && !line.startsWith("---")) return `<span class="diff-remove">${escaped}</span>`;
+    return escaped;
+  }).join("\n");
+}
+
+function renderComparison(job) {
+  if (job.comparison_status === "waiting") {
+    return `<section class="comparison-card comparison-waiting" aria-live="polite">
+      <div class="block-title"><span>BEFORE / AFTER</span><span>IN PROGRESS</span></div>
+      <div class="comparison-skeleton"><span></span><span></span></div>
+      <p>Waiting for Devin's verification screenshots…</p>
+    </section>`;
+  }
+  if (job.comparison_status === "unavailable") {
+    const prLink = job.pr_url
+      ? `<a class="comparison-pr-link" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noopener noreferrer">View the PR for screenshots ↗</a>`
+      : "";
+    return `<section class="comparison-card">
+      <div class="block-title"><span>BEFORE / AFTER</span><span>UNAVAILABLE</span></div>
+      <p>Verification screenshots are unavailable.</p>${prLink}
+    </section>`;
+  }
+  if (job.comparison_status !== "ready" || !job.comparison) return "";
+
+  const comparison = job.comparison;
+  const rootCauseMarkup = comparison.root_cause
+    ? `<p class="comparison-root-cause"><strong>Root cause</strong> ${escapeHtml(comparison.root_cause)}</p>`
+    : "";
+  const codeDiffMarkup = comparison.code_diff
+    ? `<pre class="comparison-diff">${renderCodeDiff(comparison.code_diff)}</pre>`
+    : "";
+  return `<section class="comparison-card">
+    <div class="block-title"><span>BEFORE / AFTER</span><span>VERIFIED</span></div>
+    <div class="comparison-images">
+      <div class="comparison-image"><span>BEFORE</span><a href="${escapeHtml(comparison.before_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open before screenshot full size"><img src="${escapeHtml(comparison.before_url)}" alt="before"></a></div>
+      <div class="comparison-image"><span>AFTER</span><a href="${escapeHtml(comparison.after_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open after screenshot full size"><img src="${escapeHtml(comparison.after_url)}" alt="after"></a></div>
+    </div>
+    ${rootCauseMarkup}${codeDiffMarkup}
+  </section>`;
+}
 
 function setSelectedFile(file) {
   if (!file) return;
@@ -57,7 +107,7 @@ function renderJob(job) {
   selectedJobId = job.job_id;
   document.querySelector("#empty-progress").hidden = true;
   document.querySelector("#job-view").hidden = false;
-  document.querySelector("#live-indicator").classList.toggle("is-done", terminalStages.has(job.stage));
+  document.querySelector("#live-indicator").classList.toggle("is-done", shouldStopPolling(job));
   renderStepper(job.stage);
 
   const frameMarkup = job.frame_urls?.length
@@ -86,8 +136,8 @@ function renderJob(job) {
     : "";
   const statusMarkup = waitingMarkup || `<span>${formatStage(job.stage, job)}</span>${analyzingSessionMarkup}`;
   document.querySelector("#job-content").innerHTML = `
-    <div class="job-status"><span class="status-orbit ${terminalStages.has(job.stage) ? "settled" : ""}"></span>${statusMarkup}<small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
-    ${frameMarkup}${reportMarkup}${messagesMarkup}${prMarkup}${errorMarkup}`;
+    <div class="job-status"><span class="status-orbit ${shouldStopPolling(job) ? "settled" : ""}"></span>${statusMarkup}<small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
+    ${frameMarkup}${reportMarkup}${renderComparison(job)}${messagesMarkup}${prMarkup}${errorMarkup}`;
   renderRecent();
 }
 
@@ -98,7 +148,7 @@ function renderRecent(jobs) {
   document.querySelector("#recent-jobs").innerHTML = recent.length ? recent.slice(0, 8).map(job => `
     <button class="recent-job ${job.job_id === selectedJobId ? "selected" : ""}" data-job="${escapeHtml(job.job_id)}">
       <span class="recent-icon">${job.pr_url ? "✓" : "↗"}</span>
-      <span class="recent-job-copy"><strong>${escapeHtml(job.report?.title || "Video investigation")}</strong><small>${escapeHtml(formatStage(job.stage, job))}</small></span>
+      <span class="recent-job-copy"><strong>${escapeHtml(job.report?.title || "Video investigation")}</strong><small>${escapeHtml(job.stage === "pr_opened" && job.comparison_status === "waiting" ? "Waiting for verification screenshots" : formatStage(job.stage, job))}</small></span>
       <span class="recent-chevron">→</span>
     </button>`).join("") : '<p class="recent-empty">Your recent jobs will show up here.</p>';
 }
@@ -111,7 +161,7 @@ async function refreshSelected() {
     const job = await response.json();
     window.currentJob = job;
     renderJob(job);
-    if (terminalStages.has(job.stage)) {
+    if (shouldStopPolling(job)) {
       clearInterval(pollTimer);
       pollTimer = null;
     }
@@ -160,7 +210,7 @@ document.querySelector("#submit-button").addEventListener("click", async () => {
     await refreshRecent();
     await refreshSelected();
     if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(refreshSelected, 2000);
+    if (!shouldStopPolling(window.currentJob)) pollTimer = setInterval(refreshSelected, 2000);
   } catch (error) {
     button.disabled = false;
     button.innerHTML = "<span>Try again</span><span aria-hidden=\"true\">→</span>";
@@ -176,7 +226,7 @@ document.querySelector("#recent-jobs").addEventListener("click", async event => 
   selectedJobId = button.dataset.job;
   if (pollTimer) clearInterval(pollTimer);
   await refreshSelected();
-  if (!terminalStages.has(window.currentJob?.stage)) pollTimer = setInterval(refreshSelected, 2000);
+  if (!shouldStopPolling(window.currentJob)) pollTimer = setInterval(refreshSelected, 2000);
 });
 
 async function initialize() {
@@ -185,7 +235,7 @@ async function initialize() {
   if (!jobId) return;
   selectedJobId = jobId;
   await refreshSelected();
-  if (!terminalStages.has(window.currentJob?.stage)) pollTimer = setInterval(refreshSelected, 2000);
+  if (!shouldStopPolling(window.currentJob)) pollTimer = setInterval(refreshSelected, 2000);
 }
 
 initialize();
