@@ -2,7 +2,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.jobs import FRAMES_DIR, create_job, get_job, list_jobs, run_pipeline
@@ -12,11 +11,6 @@ FRAMES_DIR.mkdir(parents=True, exist_ok=True)
 load_dotenv(BASE_DIR / ".env")
 
 app = FastAPI(title="video2pr")
-
-
-@app.get("/")
-async def frontend() -> FileResponse:
-    return FileResponse(BASE_DIR / "frontend" / "index.html")
 
 
 @app.post("/api/reports")
@@ -48,3 +42,4 @@ async def report_status(job_id: str) -> dict[str, object]:
 
 app.mount("/frames", StaticFiles(directory=FRAMES_DIR), name="frames")
 app.mount("/demo", StaticFiles(directory=BASE_DIR / "demo-app", html=True), name="demo")
+app.mount("/", StaticFiles(directory=BASE_DIR / "frontend", html=True), name="frontend")

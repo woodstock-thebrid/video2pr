@@ -37,6 +37,7 @@ def create_job(upload_name: str, note: str | None = None) -> tuple[str, Path]:
         "frame_urls": [],
         "report": None,
         "devin_session_url": None,
+        "devin_state": None,
         "pr_url": None,
         "devin_messages": [],
         "error": None,
@@ -67,14 +68,17 @@ async def run_pipeline(job_id: str, video_path: Path) -> None:
         while job["stage"] == "devin_working":
             session_data = await asyncio.to_thread(get_session, session["session_id"])
             job["devin_messages"] = (session_data.get("messages") or [])[-8:]
-            pull_request = session_data.get("pull_request") or {}
-            job["pr_url"] = pull_request.get("url") if isinstance(pull_request, dict) else None
-            status = session_data.get("status_enum", "")
+            job["devin_state"] = session_data.get("state", "working")
+            job["pr_url"] = session_data.get("pr_url")
             if job["pr_url"]:
                 _set_stage(job, "pr_opened")
                 break
-            if status in {"finished", "expired"}:
+            if job["devin_state"] == "finished":
                 _set_stage(job, "finished")
+                break
+            if job["devin_state"] == "failed":
+                job["error"] = f"Devin session {session_data.get('raw_status', 'failed')}"
+                _set_stage(job, "failed")
                 break
             await asyncio.sleep(poll_seconds)
     except Exception as exc:
@@ -96,6 +100,7 @@ def get_job(job_id: str) -> dict[str, object] | None:
         "frame_urls": job["frame_urls"],
         "report": job["report"],
         "devin_session_url": job["devin_session_url"],
+        "devin_state": job["devin_state"],
         "pr_url": job["pr_url"],
         "devin_messages": job["devin_messages"],
         "error": job["error"],
