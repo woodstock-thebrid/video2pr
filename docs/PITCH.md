@@ -8,10 +8,11 @@
 - Tab 1: **video2pr, real mode** (preview link). Leave the page open on the upload screen.
 - Tab 2: **GT Dining demo app** (`/demo/`) at a browser width where the bug is obvious.
 - Tab 3: **Backup PR**: [PR #4](https://github.com/woodstock-thebrid/video2pr/pull/4) (search bug, fixed from video only, no text hint).
-- Tab 4: **Mock mode** (backup preview link) in case Wi-Fi or Devin is slow.
-- Phone: screen recording ready, or use the pre-recorded `docs/media/bug1_quantity.mp4` / `docs/media/bug4_double_order.mp4`.
-- Live bug to use: **bug 1 (burger quantity)** or **bug 4 (double order)**. Bugs 2/3 already have PRs, so use them as backups.
-- **Never merge the fix PRs** (#2, #4, and any new ones). Merging removes the planted bugs.
+- Tab 4: **Backup PR**: [PR #8](https://github.com/woodstock-thebrid/video2pr/pull/8) (real bug-1 run).
+- Tab 5: **Mock mode** (backup preview link) in case Wi-Fi or Devin is slow.
+- Phone: screen recording ready, or use the pre-recorded `docs/media/bug1_quantity.mp4`.
+- Live bug to use: **bug 1 (burger quantity)** only. Devin read the bug-4 video as “cart not cleared after checkout,” so don't use it live.
+- **Never merge the fix PRs** (#2, #4, #7, #8, and any new fix PRs). Merging removes the planted bugs.
 
 ---
 
@@ -32,12 +33,12 @@
 - Point at the stepper: *Video → Frames → Bug report*.
 > "We sample one frame per second and hand the frames straight to **Devin** as attachments. No other model is involved.
 > Devin's first job is to watch the recording and write a structured bug report…"
-- The report card appears, labelled **Written by Devin** (≈30 s in our runs).
+- The report card appears, labelled **Written by Devin** (about 0:33 in the real rehearsal).
 > "…title, exact steps, expected $25.00, actual $12.50, and where in the code it suspects the bug is. We never typed a word."
 - Click **Open Devin session** to show Devin working live: it opens the app in a browser, reproduces the bug, and edits the code.
 
 ### 1:40–2:20: The PR (Speaker B)
-- In our runs the PR opened about **1 minute** after the session started. If it's slow, switch to the backup PR tab and come back.
+- In the real rehearsal the PR opened about **1:35** after upload, and the before/after card appeared on the page at about **2:30**. If it's slow, switch to a backup PR tab and come back.
 - Show the **Before / After** card: $12.50 → $25.00, the root cause, and the one-line diff:
   ```diff
   - return sum + item.price * (id === "burger" ? 1 : quantity);
@@ -67,7 +68,7 @@ upload video ─► ffmpeg (1 fps, ≤12 frames)
 - Mock mode replays the whole flow offline for rehearsals and as a stage backup.
 
 ## Likely judge questions
-- **"Is the bug real?"** It's planted on purpose so the demo is controlled. We have 4 different kinds: math, mobile CSS, search logic, and double-submit.
+- **"Is the bug real?"** The live bug is planted on purpose so the demo is controlled and the judges can see the expected and actual totals.
 - **"What if Devin gets it wrong?"** Nothing merges automatically. A human reviews the PR, which includes before/after proof.
 - **"Why not just GPT-4o for the report?"** One agent owns the whole loop: the same session that understood the video also reproduces and verifies the fix, so there's no context lost between handoffs.
 - **"Real-world use?"** Embed a "record bug" button in any app (support widget, QA, beta testers) and point it at your repo.
@@ -75,7 +76,7 @@ upload video ─► ffmpeg (1 fps, ≤12 frames)
 ### One-line answers (memorize these)
 | Question | One line |
 |---|---|
-| Is the bug real? | Planted on purpose so the demo is reliable, and we planted four different kinds: math, mobile CSS, search logic, double-submit. |
+| Is the bug real? | The live bug is planted on purpose so the demo is reliable and easy to reproduce. |
 | What if Devin gets it wrong? | It only opens a PR; a human reviews it, with before/after screenshots as proof. |
 | Why not just GPT-4o for the report? | The same Devin session that understood the video also reproduces and verifies the fix, so no context is lost in a handoff. |
 | Real-world use? | A "record a bug" button in any app (support, QA, beta testers) that points at your repo. |
@@ -85,6 +86,6 @@ upload video ─► ffmpeg (1 fps, ≤12 frames)
 ## Backup plan
 | Problem | Do this |
 |---|---|
-| Devin slow (>2 min) | Talk through "why it matters", then show the backup PR #4 tab |
+| Devin slow (>2 min) | Talk through "why it matters", then show the backup PR #8 tab |
 | Wi-Fi / API down | Switch to the mock-mode tab and run the same flow |
 | Upload fails | Use the pre-recorded `docs/media/bug1_quantity.mp4` |
