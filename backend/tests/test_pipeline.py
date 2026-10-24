@@ -47,6 +47,36 @@ def test_extract_frames_samples_long_video_within_limit(sample_video: Path, tmp_
     assert all(frame.is_file() and frame.stat().st_size for frame in frames)
 
 
+def test_extract_frames_handles_webm_without_container_duration(tmp_path: Path) -> None:
+    video_path = tmp_path / "bug-recording.webm"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=320x240:rate=10",
+            "-c:v",
+            "libvpx",
+            "-live",
+            "1",
+            "-f",
+            "webm",
+            str(video_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    frames = extract_frames(video_path, tmp_path / "frames")
+
+    assert frames
+    assert all(frame.is_file() and frame.stat().st_size for frame in frames)
+
+
 def test_parse_json_fence() -> None:
     report = parse_report_json(
         """```json
