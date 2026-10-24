@@ -8,10 +8,12 @@ from urllib.parse import quote
 
 import httpx
 
+from backend.report import BugReport
+
 API_BASE = "https://api.devin.ai"
 DEFAULT_ORG_ID = "org-8df7501a85724235b32b5e64a28da839"
 
-DEVIN_FIX_INSTRUCTIONS = """Serve demo-app/ locally with `python3 -m http.server`, then reproduce the bug in a browser by following the steps above. Take a screenshot showing the bug. Make the minimal fix, then take another screenshot to verify the fix. Open a PR against `main` titled `Fix: {title}`. The PR description must include the bug report, the root cause in 1–2 sentences, and the before/after screenshots. Do not touch unrelated files."""
+DEVIN_FIX_INSTRUCTIONS = """Serve demo-app/ locally with `python3 -m http.server`, then reproduce the bug in a browser by following the steps above. Take a screenshot showing the bug. Make the minimal fix, then take another screenshot to verify the fix. Open a PR against `main` titled `Fix: {title}`. The PR description must include the bug report, the root cause in 1–2 sentences, and the before/after screenshots. In the PR body, label the images with alt text exactly `before` and `after`. After opening the PR, update the structured output again with all bug report fields plus `before_screenshot_url` and `after_screenshot_url` (the exact URLs of the before and after screenshots embedded in the PR), `root_cause` (1–2 sentences), and `code_diff` (the unified diff of your fix). Do not touch unrelated files."""
 
 DEVIN_PROMPT_TEMPLATE = """Work in the repository {target_repo}.
 
@@ -62,6 +64,34 @@ def build_prompt(report: dict[str, object]) -> str:
         severity=report["severity"],
         fix_instructions=DEVIN_FIX_INSTRUCTIONS.format(title=report["title"]),
     )
+
+
+def build_session_schema() -> dict[str, object]:
+    schema_builder = getattr(BugReport, "model_json_schema", None)
+    schema = schema_builder() if schema_builder else BugReport.schema()
+    properties = schema.setdefault("properties", {})
+    properties.update(
+        {
+            "before_screenshot_url": {
+                "type": "string",
+                "description": "Exact URL of the before screenshot embedded in the PR.",
+            },
+            "after_screenshot_url": {
+                "type": "string",
+                "description": "Exact URL of the after screenshot embedded in the PR.",
+            },
+            "root_cause": {
+                "type": "string",
+                "description": "One or two sentences describing the root cause.",
+            },
+            "code_diff": {
+                "type": "string",
+                "description": "Unified diff of the minimal fix.",
+            },
+        }
+    )
+    assert "$ref" not in json.dumps(schema), "Session schema must be self-contained"
+    return schema
 
 
 def build_vision_prompt(note: str | None, attachment_urls: list[str]) -> str:
@@ -277,7 +307,25 @@ def get_session(session_id: str) -> dict[str, object]:
         timestamp = datetime.now(timezone.utc).isoformat()
         finished = progress >= 1
         structured_output = (
-            _MOCK_VISION_REPORT
+            {
+                **_MOCK_VISION_REPORT,
+                **(
+                    {
+                        "before_screenshot_url": "/mock/before.png",
+                        "after_screenshot_url": "/mock/after.png",
+                        "root_cause": (
+                            "The burger subtotal calculation omitted the quantity when computing "
+                            "the line total."
+                        ),
+                        "code_diff": (
+                            '-    return sum + item.price * (id === "burger" ? 1 : quantity);\n'
+                            '+    return sum + item.price * quantity;'
+                        ),
+                    }
+                    if finished
+                    else {}
+                ),
+            }
             if session.get("structured_output_enabled") and progress >= 0.2
             else None
         )

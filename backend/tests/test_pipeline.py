@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 import time
@@ -7,9 +8,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.devin import build_vision_prompt, create_session, get_session, upload_attachment
+from backend.devin import build_session_schema, build_vision_prompt, create_session, get_session, upload_attachment
 from backend.main import app
-from backend.jobs import JOBS
+from backend.jobs import JOBS, _poll_session, extract_before_after
 from backend.report import BugReport, parse_report_json, select_vision_provider
 from backend.video import extract_frames
 
@@ -55,6 +56,101 @@ def test_parse_json_fence() -> None:
     assert isinstance(report, BugReport)
     assert report.title == "Cart total is wrong"
     assert report.steps == ["Add two burgers"]
+
+
+def test_session_schema_has_optional_comparison_fields() -> None:
+    schema = build_session_schema()
+
+    assert "$ref" not in json.dumps(schema)
+    assert set(schema["required"]) == {
+        "title", "page", "steps", "expected", "actual", "suspected_area", "severity"
+    }
+    assert all(
+        schema["properties"][name]["type"] == "string"
+        for name in ("before_screenshot_url", "after_screenshot_url", "root_cause", "code_diff")
+    )
+    assert not set(("before_screenshot_url", "after_screenshot_url", "root_cause", "code_diff")) & set(schema["required"])
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("![AFTER](https://img/after.png) ![Before](https://img/before.png)",
+         ("https://img/before.png", "https://img/after.png")),
+        ("![one](https://img/one.png) ![two](https://img/two.png)",
+         ("https://img/one.png", "https://img/two.png")),
+        ('<img alt="after" src="https://img/after.png"><img src="https://img/before.png" alt="before">',
+         ("https://img/before.png", "https://img/after.png")),
+        ("No screenshots here.", (None, None)),
+    ],
+)
+def test_extract_before_after(body: str, expected: tuple[str | None, str | None]) -> None:
+    assert extract_before_after(body) == expected
+
+
+def test_polling_continues_after_pr_until_comparison_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.01")
+    responses = iter(
+        [
+            {"state": "working", "pr_url": "https://github.com/example/repo/pull/9", "messages": [], "structured_output": None},
+            {
+                "state": "working",
+                "pr_url": "https://github.com/example/repo/pull/9",
+                "messages": [],
+                "structured_output": {
+                    "before_screenshot_url": "https://img/before.png",
+                    "after_screenshot_url": "https://img/after.png",
+                    "root_cause": "Quantity was omitted.",
+                    "code_diff": "-old\n+new",
+                },
+            },
+        ]
+    )
+    monkeypatch.setattr("backend.jobs.get_session", lambda _session_id: next(responses))
+    job: dict[str, object] = {
+        "stage": "devin_working", "timestamps": {}, "report": {"title": "Bug"},
+        "devin_messages": [], "devin_state": None, "pr_url": None,
+        "comparison": None, "comparison_status": None,
+    }
+
+    asyncio.run(_poll_session(job, "real-session", devin_vision=False))
+
+    assert job["stage"] == "pr_opened"
+    assert job["comparison_status"] == "ready"
+    assert job["comparison"]["before_url"] == "https://img/before.png"
+    assert job["comparison"]["root_cause"] == "Quantity was omitted."
+
+
+def test_comparison_timeout_falls_back_to_pr_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVIN_POLL_SECONDS", "0.01")
+    monkeypatch.setenv("COMPARISON_TIMEOUT_SECONDS", "0")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-test")
+    monkeypatch.setattr(
+        "backend.jobs.get_session",
+        lambda _session_id: {
+            "state": "working", "pr_url": "https://github.com/example/repo/pull/15",
+            "messages": [], "structured_output": None,
+        },
+    )
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200, json={"body": "No screenshots in this PR."})
+
+    monkeypatch.setattr("backend.jobs.httpx.get", fake_get)
+    job: dict[str, object] = {
+        "stage": "devin_working", "timestamps": {}, "report": {"title": "Bug"},
+        "devin_messages": [], "devin_state": None, "pr_url": None,
+        "comparison": None, "comparison_status": None,
+    }
+
+    asyncio.run(_poll_session(job, "real-session", devin_vision=False))
+
+    assert calls[0][0] == "https://api.github.com/repos/example/repo/pulls/15"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer github-test"
+    assert job["stage"] == "pr_opened"
+    assert job["comparison_status"] == "unavailable"
 
 
 def test_mock_pipeline_returns_pr(monkeypatch: pytest.MonkeyPatch, sample_video: Path) -> None:
@@ -445,3 +541,6 @@ def test_devin_vision_mock_pipeline_uses_structured_report(
     assert "$25.00" in job["report"]["expected"]
     assert job["vision_provider"] == "devin"
     assert job["pr_url"]
+    assert job["comparison_status"] == "ready"
+    assert job["comparison"]["before_url"] == "/mock/before.png"
+    assert job["comparison"]["after_url"] == "/mock/after.png"
