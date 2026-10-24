@@ -36,4 +36,6 @@ Set `VISION_PROVIDER` to `devin`, `openai`, `anthropic`, or `mock` to choose the
 
 Without provider keys, video reports use a mock report and Devin sessions run in simulation mode. Add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for external vision analysis. Add `DEVIN_API_KEY` to create real Devin sessions: `cog_` personal access tokens use Devin API v3, while legacy tokens use v1. `DEVIN_ORG_ID` selects the v3 organization, and `MOCK_DEVIN=1` forces session simulation. The simulated session takes about 40 seconds by default; set `MOCK_DEVIN_SECONDS` to change that duration.
 
+Select multiple recordings to start parallel investigations. `POST /api/reports/batch` accepts 1 to `MAX_BATCH_VIDEOS` files (default 4) and an optional note shared across the batch.
+
 `run.sh` starts the same development server.

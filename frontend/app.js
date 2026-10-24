@@ -6,9 +6,15 @@ const stages = [
   { key: "pr_opened", label: "PR" }
 ];
 const terminalStages = new Set(["finished", "failed"]);
-let selectedFile = null;
+let selectedFiles = [];
 let selectedJobId = null;
 let pollTimer = null;
+let batchPollTimer = null;
+let batchRefreshInFlight = false;
+let batchJobIds = [];
+let batchJobs = new Map();
+let currentView = "job";
+let detailFromBoard = false;
 
 const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -64,17 +70,25 @@ function renderComparison(job) {
   </section>`;
 }
 
-function setSelectedFile(file) {
-  if (!file) return;
-  if (!file.type.startsWith("video/")) {
+function setSelectedFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  if (files.some(file => !file.type.startsWith("video/"))) {
     document.querySelector("#upload-title").textContent = "Choose a video file";
     return;
   }
-  selectedFile = file;
-  document.querySelector("#upload-title").textContent = file.name;
-  document.querySelector("#upload-subtitle").textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB · ready to analyze`;
+  selectedFiles = files;
+  const totalSize = files.reduce((total, file) => total + file.size, 0);
+  document.querySelector("#upload-title").textContent = files.length === 1
+    ? files[0].name
+    : `${files.length} videos selected`;
+  document.querySelector("#upload-subtitle").textContent = `${(totalSize / 1024 / 1024).toFixed(1)} MB · ready to analyze`;
   document.querySelector("#drop-zone").classList.add("has-file");
-  document.querySelector("#submit-button").disabled = false;
+  const button = document.querySelector("#submit-button");
+  button.disabled = false;
+  button.querySelector("span").textContent = files.length > 1
+    ? `Start ${files.length} parallel fixes`
+    : "Analyze recording";
 }
 
 function renderStepper(stage) {
@@ -107,6 +121,9 @@ function renderJob(job) {
   selectedJobId = job.job_id;
   document.querySelector("#empty-progress").hidden = true;
   document.querySelector("#job-view").hidden = false;
+  document.querySelector("#stage-stepper").hidden = false;
+  document.querySelector("#job-content").hidden = false;
+  document.querySelector("#batch-view").hidden = true;
   document.querySelector("#live-indicator").classList.toggle("is-done", shouldStopPolling(job));
   renderStepper(job.stage);
 
@@ -135,10 +152,130 @@ function renderJob(job) {
     ? `<a class="needs-input session-link" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Open Devin session ↗</a>`
     : "";
   const statusMarkup = waitingMarkup || `<span>${formatStage(job.stage, job)}</span>${analyzingSessionMarkup}`;
+  const backMarkup = detailFromBoard
+    ? '<button class="back-to-board" id="back-to-board" type="button">← Back to board</button>'
+    : "";
   document.querySelector("#job-content").innerHTML = `
+    ${backMarkup}
     <div class="job-status"><span class="status-orbit ${shouldStopPolling(job) ? "settled" : ""}"></span>${statusMarkup}<small>${escapeHtml(job.stage.replaceAll("_", " "))}</small></div>
     ${frameMarkup}${reportMarkup}${renderComparison(job)}${messagesMarkup}${prMarkup}${errorMarkup}`;
   renderRecent();
+}
+
+function renderBatchStageDots(job) {
+  const current = ({
+    extracting: 0,
+    analyzing: 2,
+    dispatching: 3,
+    devin_working: 3,
+    pr_opened: 4,
+    finished: 4,
+    failed: 4
+  }[job.stage] ?? 0);
+  return `<div class="parallel-stage-dots" aria-label="Stage: ${escapeHtml(formatStage(job.stage, job))}">${stages.map((stage, index) => {
+    const complete = job.stage === "finished" || index < current;
+    const active = index === current && !terminalStages.has(job.stage);
+    const failed = index === current && job.stage === "failed";
+    return `<span class="parallel-stage-dot ${complete ? "complete" : ""} ${active ? "active" : ""} ${failed ? "failed" : ""}" title="${escapeHtml(stage.label)}"></span>`;
+  }).join("")}</div>`;
+}
+
+function renderBatchBoard() {
+  const jobs = batchJobIds.map(jobId => batchJobs.get(jobId)).filter(Boolean);
+  const runningCount = jobs.filter(job => !shouldStopPolling(job)).length;
+  const pullRequestCount = jobs.filter(job => job.pr_url).length;
+  const runningSummary = runningCount
+    ? `${runningCount} Devin session${runningCount === 1 ? "" : "s"} running in parallel`
+    : `${jobs.length} Devin session${jobs.length === 1 ? "" : "s"} finished`;
+  const cards = jobs.map(job => {
+    const reportMarkup = job.report
+      ? `<div class="parallel-card-report"><strong>${escapeHtml(job.report.title)}</strong>${job.vision_provider === "devin" ? '<span class="report-author">Written by Devin</span>' : ""}</div>`
+      : '<p class="parallel-card-pending">Bug report in progress</p>';
+    const sessionLink = job.devin_session_url
+      ? `<a href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noopener noreferrer">Devin session ↗</a>`
+      : "";
+    const prLink = job.pr_url
+      ? `<a href="${escapeHtml(job.pr_url)}" target="_blank" rel="noopener noreferrer">Pull request ↗</a>`
+      : "";
+    const thumbnails = job.comparison_status === "ready" && job.comparison
+      ? `<div class="parallel-thumbnails">
+          <a href="${escapeHtml(job.comparison.before_url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(job.comparison.before_url)}" alt="Before screenshot"></a>
+          <a href="${escapeHtml(job.comparison.after_url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(job.comparison.after_url)}" alt="After screenshot"></a>
+        </div>`
+      : "";
+    return `<article class="parallel-job-card" data-batch-job="${escapeHtml(job.job_id)}" tabindex="0" role="button" aria-label="Open ${escapeHtml(job.upload_name || "video")} details">
+      <div class="parallel-card-heading"><strong>${escapeHtml(job.upload_name || "Video")}</strong><span>${escapeHtml(formatStage(job.stage, job))}</span></div>
+      ${renderBatchStageDots(job)}
+      ${reportMarkup}
+      <div class="parallel-card-links">${sessionLink}${prLink}</div>
+      ${thumbnails}
+    </article>`;
+  }).join("");
+  document.querySelector("#empty-progress").hidden = true;
+  document.querySelector("#job-view").hidden = false;
+  document.querySelector("#stage-stepper").hidden = true;
+  document.querySelector("#job-content").hidden = true;
+  document.querySelector("#batch-view").hidden = false;
+  document.querySelector("#live-indicator").classList.toggle("is-done", jobs.length > 0 && jobs.every(shouldStopPolling));
+  document.querySelector("#batch-view").innerHTML = `
+    <div class="parallel-board-heading">
+      <strong>${runningSummary} · ${pullRequestCount} PR${pullRequestCount === 1 ? "" : "s"} opened</strong>
+      <span>${jobs.length} videos</span>
+    </div>
+    <div class="parallel-job-grid">${cards}</div>`;
+  renderRecent();
+}
+
+function showBatchJob(jobId) {
+  const job = batchJobs.get(jobId);
+  if (!job) return;
+  currentView = "batchDetail";
+  detailFromBoard = true;
+  renderJob(job);
+}
+
+function showBatchBoard() {
+  currentView = "batchBoard";
+  detailFromBoard = false;
+  selectedJobId = null;
+  document.querySelector("#stage-stepper").hidden = true;
+  document.querySelector("#job-content").hidden = true;
+  document.querySelector("#batch-view").hidden = false;
+  renderBatchBoard();
+}
+
+async function refreshBatch() {
+  if (batchRefreshInFlight || !batchJobIds.length) return;
+  batchRefreshInFlight = true;
+  try {
+    const activeJobIds = batchJobIds.filter(jobId => {
+      const job = batchJobs.get(jobId);
+      return !job || !shouldStopPolling(job);
+    });
+    const updates = await Promise.all(activeJobIds.map(async jobId => {
+      const response = await fetch(`/api/reports/${encodeURIComponent(jobId)}`);
+      return response.ok ? response.json() : null;
+    }));
+    updates.filter(Boolean).forEach(job => batchJobs.set(job.job_id, job));
+
+    if (currentView === "batchBoard") {
+      renderBatchBoard();
+    } else if (currentView === "batchDetail" && batchJobs.has(selectedJobId)) {
+      renderJob(batchJobs.get(selectedJobId));
+    }
+    await refreshRecent();
+    if (batchJobIds.every(jobId => {
+      const job = batchJobs.get(jobId);
+      return job && shouldStopPolling(job);
+    })) {
+      clearInterval(batchPollTimer);
+      batchPollTimer = null;
+    }
+  } catch (error) {
+    console.error("Unable to refresh batch", error);
+  } finally {
+    batchRefreshInFlight = false;
+  }
 }
 
 function renderRecent(jobs) {
@@ -180,7 +317,7 @@ async function refreshRecent() {
   }
 }
 
-document.querySelector("#video-file").addEventListener("change", event => setSelectedFile(event.target.files[0]));
+document.querySelector("#video-file").addEventListener("change", event => setSelectedFiles(event.target.files));
 const dropZone = document.querySelector("#drop-zone");
 dropZone.addEventListener("dragover", event => {
   event.preventDefault();
@@ -190,39 +327,86 @@ dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragging
 dropZone.addEventListener("drop", event => {
   event.preventDefault();
   dropZone.classList.remove("dragging");
-  setSelectedFile(event.dataTransfer.files[0]);
+  setSelectedFiles(event.dataTransfer.files);
 });
 
 document.querySelector("#submit-button").addEventListener("click", async () => {
-  if (!selectedFile) return;
+  if (!selectedFiles.length) return;
   const button = document.querySelector("#submit-button");
   button.disabled = true;
-  button.innerHTML = "<span>Uploading your recording…</span><span>↗</span>";
+  button.querySelector("span").textContent = selectedFiles.length > 1
+    ? "Starting parallel fixes…"
+    : "Uploading your recording…";
   const body = new FormData();
-  body.append("video", selectedFile);
+  const isBatch = selectedFiles.length > 1;
+  if (isBatch) {
+    selectedFiles.forEach(file => body.append("videos", file));
+  } else {
+    body.append("video", selectedFiles[0]);
+  }
   body.append("note", document.querySelector("#note").value);
   try {
-    const response = await fetch("/api/reports", { method: "POST", body });
+    const endpoint = isBatch ? "/api/reports/batch" : "/api/reports";
+    const response = await fetch(endpoint, { method: "POST", body });
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || "Upload failed.");
-    selectedJobId = result.job_id;
-    window.currentJob = { stage: "extracting" };
     await refreshRecent();
-    await refreshSelected();
-    if (pollTimer) clearInterval(pollTimer);
-    if (!shouldStopPolling(window.currentJob)) pollTimer = setInterval(refreshSelected, 2000);
+    if (isBatch) {
+      if (batchPollTimer) clearInterval(batchPollTimer);
+      batchPollTimer = null;
+      currentView = "batchBoard";
+      detailFromBoard = false;
+      selectedJobId = null;
+      batchJobIds = result.job_ids;
+      batchJobs = new Map();
+      await refreshBatch();
+      if (batchJobIds.some(jobId => {
+        const job = batchJobs.get(jobId);
+        return !job || !shouldStopPolling(job);
+      })) {
+        batchPollTimer = setInterval(refreshBatch, 2000);
+      }
+    } else {
+      currentView = "job";
+      detailFromBoard = false;
+      selectedJobId = result.job_id;
+      window.currentJob = { stage: "extracting" };
+      await refreshSelected();
+      if (pollTimer) clearInterval(pollTimer);
+      if (!shouldStopPolling(window.currentJob)) pollTimer = setInterval(refreshSelected, 2000);
+    }
   } catch (error) {
     button.disabled = false;
-    button.innerHTML = "<span>Try again</span><span aria-hidden=\"true\">→</span>";
+    button.querySelector("span").textContent = "Try again";
     document.querySelector("#job-content").innerHTML = `<div class="error-card">${escapeHtml(error.message)}</div>`;
+    document.querySelector("#batch-view").hidden = true;
     document.querySelector("#empty-progress").hidden = true;
     document.querySelector("#job-view").hidden = false;
   }
 });
 
+document.querySelector("#batch-view").addEventListener("click", event => {
+  if (event.target.closest("a")) return;
+  const card = event.target.closest("[data-batch-job]");
+  if (card) showBatchJob(card.dataset.batchJob);
+});
+document.querySelector("#batch-view").addEventListener("keydown", event => {
+  if (event.target.closest("a")) return;
+  const card = event.target.closest("[data-batch-job]");
+  if (card && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    showBatchJob(card.dataset.batchJob);
+  }
+});
+document.querySelector("#job-content").addEventListener("click", event => {
+  if (event.target.closest("#back-to-board")) showBatchBoard();
+});
+
 document.querySelector("#recent-jobs").addEventListener("click", async event => {
   const button = event.target.closest("[data-job]");
   if (!button) return;
+  currentView = "job";
+  detailFromBoard = false;
   selectedJobId = button.dataset.job;
   if (pollTimer) clearInterval(pollTimer);
   await refreshSelected();

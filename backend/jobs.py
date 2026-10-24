@@ -175,13 +175,20 @@ async def _fallback_comparison(job: dict[str, object]) -> None:
         job["comparison_status"] = "unavailable"
 
 
-def create_job(upload_name: str, note: str | None = None) -> tuple[str, Path]:
+def create_job(
+    upload_name: str,
+    note: str | None = None,
+    *,
+    batch_id: str | None = None,
+) -> tuple[str, Path]:
     job_id = uuid.uuid4().hex
     vision_provider = select_vision_provider()
     safe_suffix = Path(upload_name).suffix.lower()[:12] or ".mp4"
     video_path = UPLOADS_DIR / f"{job_id}{safe_suffix}"
     JOBS[job_id] = {
         "job_id": job_id,
+        "upload_name": upload_name,
+        "batch_id": batch_id,
         "stage": "extracting",
         "timestamps": {"extracting": _now()},
         "frame_urls": [],
@@ -302,6 +309,8 @@ def get_job(job_id: str) -> dict[str, object] | None:
         return None
     return {
         "job_id": job["job_id"],
+        "upload_name": job["upload_name"],
+        "batch_id": job["batch_id"],
         "stage": job["stage"],
         "timestamps": job["timestamps"],
         "frame_urls": job["frame_urls"],
