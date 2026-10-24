@@ -18,7 +18,36 @@ def _video_duration(video_path: Path) -> float:
         capture_output=True,
         text=True,
     )
-    return float(result.stdout.strip())
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        pass
+
+    # Browser MediaRecorder WebM files carry no container duration; use the last packet timestamp.
+    packets = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time",
+            "-of",
+            "csv=p=0",
+            str(video_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    timestamps = []
+    for value in packets.stdout.split():
+        try:
+            timestamps.append(float(value.strip(",")))
+        except ValueError:
+            continue
+    return max(timestamps, default=0.0)
 
 
 def extract_frames(
