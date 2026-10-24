@@ -54,6 +54,8 @@ function renderComparison(job) {
   if (job.comparison_status !== "ready" || !job.comparison) return "";
 
   const comparison = job.comparison;
+  const beforeSrc = comparison.before_src || comparison.before_url;
+  const afterSrc = comparison.after_src || comparison.after_url;
   const rootCauseMarkup = comparison.root_cause
     ? `<p class="comparison-root-cause"><strong>Root cause</strong> ${escapeHtml(comparison.root_cause)}</p>`
     : "";
@@ -63,8 +65,8 @@ function renderComparison(job) {
   return `<section class="comparison-card">
     <div class="block-title"><span>BEFORE / AFTER</span><span>VERIFIED</span></div>
     <div class="comparison-images">
-      <div class="comparison-image"><span>BEFORE</span><a href="${escapeHtml(comparison.before_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open before screenshot full size"><img src="${escapeHtml(comparison.before_url)}" alt="before"></a></div>
-      <div class="comparison-image"><span>AFTER</span><a href="${escapeHtml(comparison.after_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open after screenshot full size"><img src="${escapeHtml(comparison.after_url)}" alt="after"></a></div>
+      <div class="comparison-image"><span>BEFORE</span><a href="${escapeHtml(beforeSrc)}" target="_blank" rel="noopener noreferrer" aria-label="Open before screenshot full size"><img src="${escapeHtml(beforeSrc)}" alt="before"></a></div>
+      <div class="comparison-image"><span>AFTER</span><a href="${escapeHtml(afterSrc)}" target="_blank" rel="noopener noreferrer" aria-label="Open after screenshot full size"><img src="${escapeHtml(afterSrc)}" alt="after"></a></div>
     </div>
     ${rootCauseMarkup}${codeDiffMarkup}
   </section>`;
@@ -199,8 +201,8 @@ function renderBatchBoard() {
       : "";
     const thumbnails = job.comparison_status === "ready" && job.comparison
       ? `<div class="parallel-thumbnails">
-          <a href="${escapeHtml(job.comparison.before_url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(job.comparison.before_url)}" alt="Before screenshot"></a>
-          <a href="${escapeHtml(job.comparison.after_url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(job.comparison.after_url)}" alt="After screenshot"></a>
+          <a href="${escapeHtml(job.comparison.before_src || job.comparison.before_url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(job.comparison.before_src || job.comparison.before_url)}" alt="Before screenshot"></a>
+          <a href="${escapeHtml(job.comparison.after_src || job.comparison.after_url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(job.comparison.after_src || job.comparison.after_url)}" alt="After screenshot"></a>
         </div>`
       : "";
     return `<article class="parallel-job-card" data-batch-job="${escapeHtml(job.job_id)}" tabindex="0" role="button" aria-label="Open ${escapeHtml(job.upload_name || "video")} details">
@@ -376,12 +378,15 @@ document.querySelector("#submit-button").addEventListener("click", async () => {
       if (!shouldStopPolling(window.currentJob)) pollTimer = setInterval(refreshSelected, 2000);
     }
   } catch (error) {
-    button.disabled = false;
-    button.querySelector("span").textContent = "Try again";
     document.querySelector("#job-content").innerHTML = `<div class="error-card">${escapeHtml(error.message)}</div>`;
     document.querySelector("#batch-view").hidden = true;
     document.querySelector("#empty-progress").hidden = true;
     document.querySelector("#job-view").hidden = false;
+  } finally {
+    button.disabled = false;
+    button.querySelector("span").textContent = selectedFiles.length > 1
+      ? `Start ${selectedFiles.length} parallel fixes`
+      : "Analyze recording";
   }
 });
 

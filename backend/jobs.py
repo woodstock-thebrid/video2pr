@@ -277,9 +277,15 @@ async def run_pipeline(job_id: str, video_path: Path) -> None:
                 "Video bug investigation",
                 schema,
                 attachment_urls,
+                upload_name=str(job["upload_name"]),
             )
         else:
-            report = await asyncio.to_thread(generate_report, frames, job.get("note"))
+            report = await asyncio.to_thread(
+                generate_report,
+                frames,
+                job.get("note"),
+                str(job["upload_name"]),
+            )
             report_data = report.model_dump() if hasattr(report, "model_dump") else report.dict()
             job["report"] = report_data
             _set_stage(job, "dispatching")
@@ -288,6 +294,7 @@ async def run_pipeline(job_id: str, video_path: Path) -> None:
                 build_prompt(report_data),
                 report_data["title"],
                 build_session_schema(),
+                upload_name=str(job["upload_name"]),
             )
 
         job["devin_session_url"] = session["url"]
@@ -307,6 +314,14 @@ def get_job(job_id: str) -> dict[str, object] | None:
     job = JOBS.get(job_id)
     if job is None:
         return None
+    comparison = job["comparison"]
+    comparison_with_sources = None
+    if isinstance(comparison, dict):
+        comparison_with_sources = {
+            **comparison,
+            "before_src": f"/api/reports/{job_id}/comparison/before",
+            "after_src": f"/api/reports/{job_id}/comparison/after",
+        }
     return {
         "job_id": job["job_id"],
         "upload_name": job["upload_name"],
@@ -321,7 +336,7 @@ def get_job(job_id: str) -> dict[str, object] | None:
         "devin_messages": job["devin_messages"],
         "error": job["error"],
         "vision_provider": job["vision_provider"],
-        "comparison": job["comparison"],
+        "comparison": comparison_with_sources,
         "comparison_status": job["comparison_status"],
     }
 
