@@ -27,7 +27,7 @@ function renderCart() {
   const itemCount = entries.reduce((sum, [, quantity]) => sum + quantity, 0);
   const subtotal = entries.reduce((sum, [id, quantity]) => {
     const item = menu.find(candidate => candidate.id === id);
-    return sum + item.price * (id === "burger" ? 1 : quantity);
+    return sum + item.price * quantity;
   }, 0);
   const tax = subtotal * 0.089;
   document.querySelector("#cart-count").textContent = itemCount;
