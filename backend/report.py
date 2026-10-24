@@ -1,0 +1,120 @@
+import base64
+import json
+import os
+import re
+from pathlib import Path
+
+import httpx
+from pydantic import BaseModel
+
+
+class BugReport(BaseModel):
+    title: str
+    page: str
+    steps: list[str]
+    expected: str
+    actual: str
+    suspected_area: str
+    severity: str
+
+
+SYSTEM_PROMPT = """You analyze screen recordings of a web app and produce a concise, actionable bug report.
+The app context must come only from what is visible in the provided frames and the user's optional note; do not assume hidden product behavior. Be specific about UI element names and numbers seen on screen. Return only a JSON object with keys title, page, steps (an array of strings), expected, actual, suspected_area, and severity. Severity should be one of low, medium, high, or critical."""
+
+
+def parse_report_json(content: str) -> BugReport:
+    cleaned = content.strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        cleaned = fenced.group(1).strip()
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        data = json.loads(cleaned[start : end + 1])
+    return BugReport.model_validate(data) if hasattr(BugReport, "model_validate") else BugReport.parse_obj(data)
+
+
+def _mock_report(note: str | None = None) -> BugReport:
+    actual = "The visible page did not behave as expected during the recording."
+    if note:
+        actual = f"{actual} User note: {note}"
+    return BugReport(
+        title="Unexpected behavior on the recorded page",
+        page="The page shown in the recording",
+        steps=["Open the page shown in the recording.", "Repeat the interaction visible in the frames."],
+        expected="The page should respond to the interaction and display the intended result.",
+        actual=actual,
+        suspected_area="The visible control or page state involved in the recorded interaction.",
+        severity="medium",
+    )
+
+
+def generate_report(frames: list[Path], note: str | None = None) -> BugReport:
+    openai_key = os.getenv("OPENAI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not openai_key and not anthropic_key:
+        return _mock_report(note)
+
+    user_prompt = "Inspect these ordered video frames and write the structured bug report."
+    if note:
+        user_prompt += f"\n\nAdditional context from the user: {note}"
+
+    if openai_key:
+        content: list[dict[str, object]] = [{"type": "text", "text": user_prompt}]
+        for frame in frames:
+            encoded = base64.b64encode(frame.read_bytes()).decode("ascii")
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
+                }
+            )
+        response = httpx.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {openai_key}"},
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": content},
+                ],
+                "response_format": {"type": "json_object"},
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        text = response.json()["choices"][0]["message"]["content"]
+        return parse_report_json(text)
+
+    content_blocks: list[dict[str, object]] = [{"type": "text", "text": user_prompt}]
+    for frame in frames:
+        encoded = base64.b64encode(frame.read_bytes()).decode("ascii")
+        content_blocks.append(
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded},
+            }
+        )
+    response = httpx.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": anthropic_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+            "max_tokens": 1200,
+            "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": content_blocks}],
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    text = "".join(
+        block.get("text", "") for block in response.json().get("content", []) if block.get("type") == "text"
+    )
+    return parse_report_json(text)
