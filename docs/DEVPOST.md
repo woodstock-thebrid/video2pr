@@ -24,6 +24,7 @@ We designed video2pr around a simple flow: video → key frames → structured r
 - The GT Dining demo app has four intentionally planted bugs; backup/mock mode supports rehearsals without API credits.
 - We built the test suite, rehearsed real-mode runs, and produced the demo video and slides.
 - We chose to send raw frames directly to the AI agent instead of adding a separate vision-model summary.
+- We used an AI coding assistant for much of the implementation; the team owned the idea, design decisions, task split, code review, and the demo.
 - **Devin API v1** provides frame attachments, one session per video, and structured output; the AI agent then reads the screenshots, reproduces the bug, fixes it, and opens a PR with before/after proof.
 
 ## Challenges we ran into
