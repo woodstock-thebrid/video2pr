@@ -2,7 +2,7 @@ const stages = [
   { key: "extracting", label: "Video" },
   { key: "frames", label: "Frames" },
   { key: "analyzing", label: "Bug report" },
-  { key: "devin_working", label: "Devin fixing" },
+  { key: "devin_working", label: "Agent fixing" },
   { key: "pr_opened", label: "PR" }
 ];
 const terminalStages = new Set(["finished", "failed"]);
@@ -35,7 +35,7 @@ const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character =>
 function reportMarkdown(job) {
   const report = job.report || {};
   const lines = [
-    "## Bug report (written by Devin from a screen recording)",
+    "## Bug report (written by an AI agent from a screen recording)",
     "",
     `**Page:** ${report.page || ""}`,
     `**Severity:** ${report.severity || ""}`,
@@ -47,7 +47,7 @@ function reportMarkdown(job) {
     `**Actual:** ${report.actual || ""}`,
     `**Suspected area:** ${report.suspected_area || ""}`
   ];
-  if (job.devin_session_url) lines.push("", `Devin session: ${job.devin_session_url}`);
+  if (job.devin_session_url) lines.push("", `Agent session: ${job.devin_session_url}`);
   if (job.pr_url) lines.push("", `Fix PR: ${job.pr_url}`);
   return lines.join("\n");
 }
@@ -165,7 +165,7 @@ function renderComparison(job) {
     return `<section class="comparison-card comparison-waiting" aria-live="polite">
       <div class="block-title"><span>BEFORE / AFTER</span><span>IN PROGRESS</span></div>
       <div class="comparison-skeleton"><span></span><span></span></div>
-      <p>Waiting for Devin's verification screenshots…</p>
+      <p>Waiting for the agent's verification screenshots…</p>
     </section>`;
   }
   if (job.comparison_status === "unavailable") {
@@ -313,13 +313,13 @@ function renderStepper(stage) {
 
 function formatStage(stage, job) {
   if (stage === "analyzing" && job?.vision_provider === "devin") {
-    return "Devin is watching the recording";
+    return "AI agent is watching the recording";
   }
   return ({
     extracting: "Extracting video frames",
     analyzing: "Writing your bug report",
-    dispatching: "Handing the report to Devin",
-    devin_working: "Devin is working on a fix",
+    dispatching: "Handing the report to the AI agent",
+    devin_working: "AI agent is working on a fix",
     pr_opened: "Pull request opened",
     finished: "Session finished",
     failed: "Investigation hit a snag"
@@ -345,7 +345,7 @@ function renderJob(job) {
   if (job.report) {
     const report = job.report;
     const authorBadge = job.vision_provider === "devin"
-      ? '<span class="report-author">Written by Devin</span>'
+      ? '<span class="report-author">Written by AI agent</span>'
       : "";
     const copyLabel = copyFeedbackJobId === job.job_id && Date.now() < copyFeedbackUntil
       ? copyFeedbackLabel
@@ -353,17 +353,17 @@ function renderJob(job) {
     reportMarkup = `<article class="report-card"><div class="report-top"><span class="report-label">BUG REPORT</span>${authorBadge}<span class="severity severity-${escapeHtml(report.severity)}">${escapeHtml(report.severity)}</span></div><h3>${escapeHtml(report.title)}</h3><p class="report-page">${escapeHtml(report.page)}</p><div class="report-facts"><div><span>EXPECTED</span><p>${escapeHtml(report.expected)}</p></div><div><span>ACTUAL</span><p>${escapeHtml(report.actual)}</p></div></div><div class="report-steps"><strong>REPRODUCTION</strong><ol>${(report.steps || []).map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></div><p class="suspected"><strong>Suspected area</strong> ${escapeHtml(report.suspected_area)}</p><div class="report-actions"><button type="button" class="report-action" data-copy-report>${copyLabel}</button><button type="button" class="report-action" data-open-issue>Open as GitHub issue</button></div></article>`;
   }
   const messagesMarkup = job.devin_messages?.length
-    ? `<div class="result-block messages-block"><div class="block-title"><span>DEVIN ACTIVITY</span><span>${job.devin_messages.length} updates</span></div><div class="message-feed">${job.devin_messages.slice(-8).map(message => `<div class="message"><span class="message-dot"></span><p>${escapeHtml(message.message)}</p></div>`).join("")}</div></div>`
+    ? `<div class="result-block messages-block"><div class="block-title"><span>AGENT ACTIVITY</span><span>${job.devin_messages.length} updates</span></div><div class="message-feed">${job.devin_messages.slice(-8).map(message => `<div class="message"><span class="message-dot"></span><p>${escapeHtml(message.message)}</p></div>`).join("")}</div></div>`
     : "";
   const prMarkup = job.pr_url
     ? `<a class="pr-button" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noreferrer"><span><small>READY FOR REVIEW</small>View pull request</span><span aria-hidden="true">↗</span></a>`
     : "";
   const errorMarkup = job.error ? `<div class="error-card"><strong>We couldn't finish this run.</strong><p>${escapeHtml(job.error)}</p></div>` : "";
   const waitingMarkup = job.devin_state === "waiting_for_user" && job.devin_session_url
-    ? `<a class="needs-input" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Devin needs input — open session ↗</a>`
+    ? `<a class="needs-input" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Agent needs input — open session ↗</a>`
     : "";
   const analyzingSessionMarkup = job.vision_provider === "devin" && job.stage === "analyzing" && job.devin_session_url
-    ? `<a class="needs-input session-link" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Open Devin session ↗</a>`
+    ? `<a class="needs-input session-link" href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noreferrer">Open agent session ↗</a>`
     : "";
   const statusMarkup = waitingMarkup || `<span>${formatStage(job.stage, job)}</span>${analyzingSessionMarkup}`;
   const backMarkup = detailFromBoard
@@ -402,18 +402,18 @@ function renderBatchBoard() {
   const runningCount = jobs.filter(job => !shouldStopPolling(job)).length;
   const pullRequestCount = jobs.filter(job => job.pr_url).length;
   const runningSummary = runningCount
-    ? `${runningCount} Devin session${runningCount === 1 ? "" : "s"} running in parallel`
-    : `${jobs.length} Devin session${jobs.length === 1 ? "" : "s"} finished`;
+    ? `${runningCount} agent session${runningCount === 1 ? "" : "s"} running in parallel`
+    : `${jobs.length} agent session${jobs.length === 1 ? "" : "s"} finished`;
   const cards = jobs.map(job => {
     const reportMarkup = job.report
-      ? `<div class="parallel-card-report"><strong>${escapeHtml(job.report.title)}</strong>${job.vision_provider === "devin" ? '<span class="report-author">Written by Devin</span>' : ""}</div>`
+      ? `<div class="parallel-card-report"><strong>${escapeHtml(job.report.title)}</strong>${job.vision_provider === "devin" ? '<span class="report-author">Written by AI agent</span>' : ""}</div>`
       : '<p class="parallel-card-pending">Bug report in progress</p>';
     const prDuration = job.pr_url ? jobPrDuration(job) : null;
     const prTimeMarkup = prDuration !== null
       ? `<span class="parallel-pr-time">PR in ${prDuration}</span>`
       : "";
     const sessionLink = job.devin_session_url
-      ? `<a href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noopener noreferrer">Devin session ↗</a>`
+      ? `<a href="${escapeHtml(job.devin_session_url)}" target="_blank" rel="noopener noreferrer">Agent session ↗</a>`
       : "";
     const prLink = job.pr_url
       ? `<a href="${escapeHtml(job.pr_url)}" target="_blank" rel="noopener noreferrer">Pull request ↗</a>`

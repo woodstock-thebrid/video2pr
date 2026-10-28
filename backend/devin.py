@@ -136,7 +136,7 @@ def upload_attachment(path: Path) -> str:
             response = _request("POST", f"{_org_base()}/attachments", headers=_headers(), files=files)
             url = response.json().get("url")
             if not isinstance(url, str):
-                raise RuntimeError("Devin attachment response did not include a URL.")
+                raise RuntimeError("AI agent attachment response did not include a URL.")
             return url
         response = _request("POST", "/v1/attachments", headers=_headers(), files=files)
 
@@ -148,7 +148,7 @@ def upload_attachment(path: Path) -> str:
         return value.strip().strip('"')
     if isinstance(value, dict) and isinstance(value.get("url"), str):
         return value["url"]
-    raise RuntimeError("Devin attachment response did not include a URL.")
+    raise RuntimeError("AI agent attachment response did not include a URL.")
 
 
 def _with_attachment_lines(prompt: str, attachment_urls: list[str] | None) -> str:
