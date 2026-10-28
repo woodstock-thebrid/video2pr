@@ -60,6 +60,8 @@ document.querySelector("#checkout").addEventListener("click", () => {
   const confirmation = document.querySelector("#confirmation");
   confirmation.hidden = false;
   confirmation.innerHTML = `<span class="confirmation-check">✓</span><strong>Order #${count} is in the works!</strong><span>We'll have it ready for pickup soon.</span>`;
+  cart.clear();
+  renderCart();
 });
 
 renderMenu();
