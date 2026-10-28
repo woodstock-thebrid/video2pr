@@ -1,10 +1,19 @@
 # video2pr
 
-Turn a phone screen recording of a web-app bug into a structured report and a Devin session that reproduces and fixes it.
+We designed video2pr to turn a phone screen recording of a web-app bug into key frames and a structured report. The AI agent reads the frames, reproduces and fixes the issue, then opens a pull request with before/after proof for a human to review and merge.
 
-![video2pr real-mode demo: click "Report a bug" in the demo app, Devin writes the report, opens a PR in 1m 24s, before/after comparison](docs/media/real_mode_demo.gif)
+## What we built
+- Designed the video → key frames → structured report → reproduce → fix → PR workflow, with before/after proof and human review.
+- Built the FastAPI backend and vanilla-JS job page, ffmpeg frame sampling (including a WebM no-duration fallback), and authenticated screenshot proxy.
+- Added the parallel job board, Video → PR timer, before/after comparison and lightbox, Real runs page, Markdown/GitHub issue actions, and in-app Report a bug recorder.
+- Built GT Dining with four planted bugs, backup/mock mode, the test suite, real-mode rehearsals, and the demo video and slides.
+- Chose to send raw key frames straight to the AI agent rather than add a separate vision-model summary.
 
-<sub>Real Devin run, waiting parts sped up. Full video: [`docs/media/real_mode_demo.mp4`](docs/media/real_mode_demo.mp4) (resulting PR: #14, intentionally unmerged). Slides: [`docs/media/video2pr_slides.pptx`](docs/media/video2pr_slides.pptx) / [PDF](docs/media/video2pr_slides.pdf).</sub>
+We used an AI coding assistant to write much of the implementation. The team owned the idea, design decisions, task split, code review, and the demo.
+
+![video2pr real-mode demo: click "Report a bug" in the demo app, the AI agent writes the report, opens a PR in 1m 18s, before/after comparison](docs/media/real_mode_demo.gif)
+
+<sub>Real AI-agent run, waiting parts sped up. Full video: [`docs/media/real_mode_demo.mp4`](docs/media/real_mode_demo.mp4) (resulting PR: #17, intentionally unmerged). Slides: [`docs/media/video2pr_slides.pptx`](docs/media/video2pr_slides.pptx) / [PDF](docs/media/video2pr_slides.pdf).</sub>
 
 ### Backup mode
 
@@ -21,10 +30,10 @@ Phone/browser video
 FastAPI upload ──► ffprobe + ffmpeg frame extraction
         │
         ▼
-Vision report (Devin structured output / OpenAI / Anthropic / local mock)
+Vision report (AI agent structured output / OpenAI / Anthropic / local mock)
         │
         ▼
-Devin API session (or simulated session)
+AI agent API session (or simulated session)
         │
         ├──► Static frontend: progress, frames, report, messages, PR
         └──► /demo/: GT Dining ordering app for the repro walkthrough
@@ -42,9 +51,9 @@ uvicorn backend.main:app --reload --port 8000
 
 The frontend is available at <http://localhost:8000>, and the sample GT Dining app is at <http://localhost:8000/demo/>.
 
-Set `VISION_PROVIDER` to `devin`, `openai`, `anthropic`, or `mock` to choose the vision provider explicitly. When unset, a live Devin key is preferred, followed by OpenAI, Anthropic, then the local mock. Devin vision attaches the ordered video frames and asks Devin to submit a structured bug report before reproducing the issue. Set `VISION_PROVIDER=devin` with `MOCK_DEVIN=1` to rehearse that flow without creating a real session.
+Set `VISION_PROVIDER` to `devin`, `openai`, `anthropic`, or `mock` to choose the vision provider explicitly. When unset, a live AI-agent key is preferred, followed by OpenAI, Anthropic, then the local mock. With `VISION_PROVIDER=devin`, the ordered video frames go straight to the AI agent for a structured bug report before it reproduces the issue. Set `VISION_PROVIDER=devin` with `MOCK_DEVIN=1` to rehearse that flow without creating a real session.
 
-Without provider keys, video reports use a mock report and Devin sessions run in simulation mode. Add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for external vision analysis. Add `DEVIN_API_KEY` to create real Devin sessions: `cog_` personal access tokens use Devin API v3, while legacy tokens use v1. `DEVIN_ORG_ID` selects the v3 organization, and `MOCK_DEVIN=1` forces session simulation. The simulated session takes about 40 seconds by default; set `MOCK_DEVIN_SECONDS` to change that duration.
+Without provider keys, video reports use a mock report and AI-agent sessions run in simulation mode. Add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for external vision analysis. Add `DEVIN_API_KEY` to create real AI-agent sessions. `DEVIN_ORG_ID` selects the organization for `cog_` personal access tokens, and `MOCK_DEVIN=1` forces session simulation. The simulated session takes about 40 seconds by default; set `MOCK_DEVIN_SECONDS` to change that duration. Agent sessions use the Devin API v1 for legacy tokens and v3 for `cog_` personal access tokens (attachments, sessions, structured output).
 
 Select multiple recordings to start parallel investigations. `POST /api/reports/batch` accepts 1 to `MAX_BATCH_VIDEOS` files (default 4) and an optional note shared across the batch.
 
