@@ -11,7 +11,7 @@ const cart = new Map();
 const formatMoney = amount => `$${amount.toFixed(2)}`;
 
 function renderMenu(searchTerm = "") {
-  const normalizedTerm = searchTerm.toLowerCase().replace(/\s/g, "");
+  const normalizedTerm = searchTerm.toLowerCase().trim().replace(/\s+/g, " ");
   const matches = menu.filter(item => item.name.toLowerCase().includes(normalizedTerm) || item.description.toLowerCase().includes(normalizedTerm));
   document.querySelector("#menu-items").innerHTML = matches.map(item => `
     <article class="menu-item">
