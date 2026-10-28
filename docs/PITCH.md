@@ -33,7 +33,7 @@
 - Point at the stepper: *Video → Frames → Bug report*.
 > "We built the ffmpeg pipeline to sample one frame per second and send the raw frames straight to the AI agent as attachments. We chose not to add a separate vision-model summary.
 > The AI agent watches the recording and writes a structured bug report…"
-- The report card appears, labelled **Written by AI agent** (about 0:33 in the real rehearsal).
+- The report card appears, labelled **Written by AI agent** (about 0:37 in the latest real run).
 > "…title, exact steps, expected $25.00, actual $12.50, and where in the code it suspects the bug is. We never typed a word."
 - Click **Open agent session** to show the AI agent working live: it opens the app in a browser, reproduces the bug, and edits the code.
 

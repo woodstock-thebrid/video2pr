@@ -11,9 +11,9 @@ We designed video2pr to turn a phone screen recording of a web-app bug into key 
 
 We used an AI coding assistant to write much of the implementation. The team owned the idea, design decisions, task split, code review, and the demo.
 
-![video2pr real-mode demo: click "Report a bug" in the demo app, the AI agent writes the report, opens a PR in 1m 24s, before/after comparison](docs/media/real_mode_demo.gif)
+![video2pr real-mode demo: click "Report a bug" in the demo app, the AI agent writes the report, opens a PR in 1m 18s, before/after comparison](docs/media/real_mode_demo.gif)
 
-<sub>Real AI-agent run, waiting parts sped up. Full video: [`docs/media/real_mode_demo.mp4`](docs/media/real_mode_demo.mp4) (resulting PR: #14, intentionally unmerged). Slides: [`docs/media/video2pr_slides.pptx`](docs/media/video2pr_slides.pptx) / [PDF](docs/media/video2pr_slides.pdf).</sub>
+<sub>Real AI-agent run, waiting parts sped up. Full video: [`docs/media/real_mode_demo.mp4`](docs/media/real_mode_demo.mp4) (resulting PR: #17, intentionally unmerged). Slides: [`docs/media/video2pr_slides.pptx`](docs/media/video2pr_slides.pptx) / [PDF](docs/media/video2pr_slides.pdf).</sub>
 
 ### Backup mode
 

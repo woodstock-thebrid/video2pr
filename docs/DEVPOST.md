@@ -34,7 +34,8 @@ We designed video2pr around a simple flow: video → key frames → structured r
 - Shared GitHub access across teammates' accounts and organizations.
 
 ## Accomplishments that we're proud of
-- A real end-to-end run from the in-app "Report a bug" button: bug report at **0:33**, PR opened at **1:24**, before/after on the page at about **1:56** ([PR #14](https://github.com/woodstock-thebrid/video2pr/pull/14)).
+- The latest real end-to-end run from the in-app "Report a bug" button (shown in the demo video): bug report at about **0:37**, PR opened at **1:18** ([PR #17](https://github.com/woodstock-thebrid/video2pr/pull/17)).
+- An earlier run from the same button: bug report at **0:33**, PR opened at **1:24**, before/after on the page at about **1:56** ([PR #14](https://github.com/woodstock-thebrid/video2pr/pull/14)).
 - An earlier rehearsal: bug report at about **0:33**, PR opened at about **1:35**, before/after on the page at about **2:30**.
 - Real PRs opened by the pipeline: [#4](https://github.com/woodstock-thebrid/video2pr/pull/4) and [#8](https://github.com/woodstock-thebrid/video2pr/pull/8).
 - One AI agent owns the whole loop, from reading the video to proving the fix. Nothing merges without human review.
