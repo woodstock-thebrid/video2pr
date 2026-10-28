@@ -250,7 +250,7 @@ async def _poll_session(job: dict[str, object], session_id: str, *, devin_vision
             _set_stage(job, "finished")
             break
         if job["devin_state"] == "failed":
-            job["error"] = f"Devin session {session_data.get('raw_status', 'failed')}"
+            job["error"] = f"Agent session {session_data.get('raw_status', 'failed')}"
             _set_stage(job, "failed")
             break
         await asyncio.sleep(poll_seconds)
